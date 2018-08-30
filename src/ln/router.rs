@@ -3,6 +3,8 @@ use secp256k1::{Secp256k1,Message};
 use secp256k1;
 
 use bitcoin::util::hash::Sha256dHash;
+use bitcoin::blockdata::constants::genesis_block;
+use bitcoin::network::serialize::BitcoinHash;
 
 use chain::chaininterface::ChainWatchInterface;
 use ln::channelmanager;
@@ -203,11 +205,13 @@ impl RoutingMessageHandler for Router {
 		secp_verify_sig!(self.secp_ctx, &msg_hash, &msg.bitcoin_signature_1, &msg.contents.bitcoin_key_1);
 		secp_verify_sig!(self.secp_ctx, &msg_hash, &msg.bitcoin_signature_2, &msg.contents.bitcoin_key_2);
 
-		//TODO: Call blockchain thing to ask if the short_channel_id is valid
-		//TODO: Only allow bitcoin chain_hash
-
 		if msg.contents.features.requires_unknown_bits() {
 			panic!("Unknown-required-features ChannelAnnouncements should never deserialize!");
+		}
+
+		//TODO: Call blockchain thing to ask if the short_channel_id is valid
+		if msg.contents.chain_hash != genesis_block(self.chain_monitor.get_network()).header.bitcoin_hash() {
+			return Err(HandleError{err: "Channel announced on an unknown chain", action: Some(ErrorAction::IgnoreError)});
 		}
 
 		let mut network = self.network_map.write().unwrap();
@@ -643,6 +647,7 @@ mod tests {
 	use util::logger::Logger;
 
 	use bitcoin::util::hash::Sha256dHash;
+	use bitcoin::network::constants::Network;
 
 	use hex;
 

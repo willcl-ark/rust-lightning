@@ -1,10 +1,25 @@
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::blockdata::script::Script;
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::util::hash::Sha256dHash;
+use bitcoin::network::constants::Network;
+use bitcoin::network::serialize::BitcoinHash;
 use util::logger::Logger;
 use std::sync::{Mutex,Weak,MutexGuard,Arc};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Used to give chain error details upstream
+pub enum ChainError {
+	/// Chain isn't supported
+	NotSupported,
+	/// Chain isn't the one watched
+	NotWatched,
+	/// Tx isn't there
+	UnknownTx,
+	/// Tx isn't confirmed
+	UnconfirmedTx,
+}
 
 /// An interface to request notification of certain scripts as they appear the
 /// chain.
@@ -24,6 +39,15 @@ pub trait ChainWatchInterface: Sync + Send {
 
 	fn register_listener(&self, listener: Weak<ChainListener>);
 	//TODO: unregister
+
+	/// Gets the chain currently watched
+	fn get_network(&self) -> Network;
+
+	/// Gets the script and value in satoshis for a given txid and outpoint index
+	fn get_chain_txo(&self, genesis_hash: Sha256dHash, txid: Sha256dHash, output_index: u16) -> Result<(Script, u64), ChainError>;
+
+	/// Gets if outpoint is among UTXO
+	fn get_spendable_outpoint(&self, genesis_hash: Sha256dHash, txid: Sha256dHash, output_index: u16) -> Result<bool, ChainError>;
 }
 
 /// An interface to send a transaction to the Bitcoin network.
@@ -69,10 +93,19 @@ pub trait FeeEstimator: Sync + Send {
 /// Utility to capture some common parts of ChainWatchInterface implementors.
 /// Keeping a local copy of this in a ChainWatchInterface implementor is likely useful.
 pub struct ChainWatchInterfaceUtil {
+	network: Network,
 	watched: Mutex<(Vec<Script>, Vec<(Sha256dHash, u32)>, bool)>, //TODO: Something clever to optimize this
 	listeners: Mutex<Vec<Weak<ChainListener>>>,
 	reentered: AtomicUsize,
 	logger: Arc<Logger>,
+}
+
+macro_rules! watched_chain {
+	($self: ident, $hash: expr) => {
+		if $hash != genesis_block($self.get_network()).header.bitcoin_hash() {
+			return Err(ChainError::NotWatched);
+		}
+	}
 }
 
 /// Register listener
@@ -99,11 +132,31 @@ impl ChainWatchInterface for ChainWatchInterfaceUtil {
 		let mut vec = self.listeners.lock().unwrap();
 		vec.push(listener);
 	}
+
+	fn get_network(&self) -> Network {
+		self.network
+	}
+
+
+	fn get_chain_txo(&self, genesis_hash: Sha256dHash, _txid: Sha256dHash, _output_index: u16) -> Result<(Script, u64), ChainError> {
+		watched_chain!(self, genesis_hash);
+
+		//TODO: self.BlockchainStore.get_txo(txid, output_index)
+		Err(ChainError::UnknownTx)
+	}
+
+	fn get_spendable_outpoint(&self, genesis_hash: Sha256dHash, _txid: Sha256dHash, _output_index: u16) -> Result<bool, ChainError> {
+		watched_chain!(self, genesis_hash);
+
+		//TODO: self.BlockchainStore.is_utxo(txid, output_index)
+		Err(ChainError::UnknownTx)
+	}
 }
 
 impl ChainWatchInterfaceUtil {
-	pub fn new(logger: Arc<Logger>) -> ChainWatchInterfaceUtil {
+	pub fn new(network: Network, logger: Arc<Logger>) -> ChainWatchInterfaceUtil {
 		ChainWatchInterfaceUtil {
+			network: network,
 			watched: Mutex::new((Vec::new(), Vec::new(), false)),
 			listeners: Mutex::new(Vec::new()),
 			reentered: AtomicUsize::new(1),
