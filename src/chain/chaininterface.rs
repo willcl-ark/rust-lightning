@@ -11,14 +11,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Used to give chain error details upstream
 pub enum ChainError {
-	/// Chain isn't supported
+	/// Client doesn't support UTXO lookup (but the chain hash matches our genesis block hash)
 	NotSupported,
 	/// Chain isn't the one watched
 	NotWatched,
-	/// Tx isn't there
+	/// Tx doesn't exist or is unconfirmed
 	UnknownTx,
-	/// Tx isn't confirmed
-	UnconfirmedTx,
 }
 
 /// An interface to request notification of certain scripts as they appear the
@@ -40,14 +38,11 @@ pub trait ChainWatchInterface: Sync + Send {
 	fn register_listener(&self, listener: Weak<ChainListener>);
 	//TODO: unregister
 
-	/// Gets the chain currently watched
-	fn get_network(&self) -> Network;
-
-	/// Gets the script and value in satoshis for a given txid and outpoint index
-	fn get_chain_txo(&self, genesis_hash: Sha256dHash, txid: Sha256dHash, output_index: u16) -> Result<(Script, u64), ChainError>;
-
-	/// Gets if outpoint is among UTXO
-	fn get_spendable_outpoint(&self, genesis_hash: Sha256dHash, txid: Sha256dHash, output_index: u16) -> Result<bool, ChainError>;
+	/// Gets the script and value in satoshis for a given unspent transaction output given a
+	/// short_channel_id (aka unspent_tx_output_identier). For BTC/tBTC channels the top three
+	/// bytes are the block height, the next 3 the transaction index within the block, and the
+	/// final two the output within the transaction.
+	fn get_chain_utxo(&self, genesis_hash: Sha256dHash, unspent_tx_output_identifier: u64) -> Result<(Script, u64), ChainError>;
 }
 
 /// An interface to send a transaction to the Bitcoin network.
@@ -100,14 +95,6 @@ pub struct ChainWatchInterfaceUtil {
 	logger: Arc<Logger>,
 }
 
-macro_rules! watched_chain {
-	($self: ident, $hash: expr) => {
-		if $hash != genesis_block($self.get_network()).header.bitcoin_hash() {
-			return Err(ChainError::NotWatched);
-		}
-	}
-}
-
 /// Register listener
 impl ChainWatchInterface for ChainWatchInterfaceUtil {
 	fn install_watch_script(&self, script_pub_key: &Script) {
@@ -133,23 +120,11 @@ impl ChainWatchInterface for ChainWatchInterfaceUtil {
 		vec.push(listener);
 	}
 
-	fn get_network(&self) -> Network {
-		self.network
-	}
-
-
-	fn get_chain_txo(&self, genesis_hash: Sha256dHash, _txid: Sha256dHash, _output_index: u16) -> Result<(Script, u64), ChainError> {
-		watched_chain!(self, genesis_hash);
-
-		//TODO: self.BlockchainStore.get_txo(txid, output_index)
-		Err(ChainError::UnknownTx)
-	}
-
-	fn get_spendable_outpoint(&self, genesis_hash: Sha256dHash, _txid: Sha256dHash, _output_index: u16) -> Result<bool, ChainError> {
-		watched_chain!(self, genesis_hash);
-
-		//TODO: self.BlockchainStore.is_utxo(txid, output_index)
-		Err(ChainError::UnknownTx)
+	fn get_chain_utxo(&self, genesis_hash: Sha256dHash, _unspent_tx_output_identifier: u64) -> Result<(Script, u64), ChainError> {
+		if genesis_hash != genesis_block(self.network).header.bitcoin_hash() {
+			return Err(ChainError::NotWatched);
+		}
+		Err(ChainError::NotSupported)
 	}
 }
 
