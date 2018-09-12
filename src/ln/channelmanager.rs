@@ -27,6 +27,7 @@ use ln::channelmonitor::ManyChannelMonitor;
 use ln::router::{Route,RouteHop};
 use ln::msgs;
 use ln::msgs::{HandleError,ChannelMessageHandler};
+use util::configurations::UserConfigurations;
 use util::{byte_utils, events, internal_traits, rng};
 use util::sha2::Sha256;
 use util::ser::{Readable, Writeable};
@@ -229,6 +230,7 @@ const ERR: () = "You need at least 32 bit pointers (well, usize, but we'll assum
 /// Implements ChannelMessageHandler, handling the multi-channel parts and passing things through
 /// to individual Channels.
 pub struct ChannelManager {
+	configuration : UserConfigurations,
 	genesis_hash: Sha256dHash,
 	fee_estimator: Arc<FeeEstimator>,
 	monitor: Arc<ManyChannelMonitor>,
@@ -301,6 +303,7 @@ impl ChannelManager {
 		let secp_ctx = Secp256k1::new();
 
 		let res = Arc::new(ChannelManager {
+			configuration : UserConfigurations::new(),
 			genesis_hash: genesis_block(network).header.bitcoin_hash(),
 			fee_estimator: feeest.clone(),
 			monitor: monitor.clone(),
@@ -362,7 +365,7 @@ impl ChannelManager {
 			}
 		};
 
-		let channel = Channel::new_outbound(&*self.fee_estimator, chan_keys, their_network_key, channel_value_satoshis, push_msat, self.announce_channels_publicly, user_id, Arc::clone(&self.logger))?;
+		let channel = Channel::new_outbound(&*self.fee_estimator, chan_keys, their_network_key, channel_value_satoshis, push_msat, self.announce_channels_publicly, user_id, Arc::clone(&self.logger), &self.configuration)?;
 		let res = channel.get_open_channel(self.genesis_hash.clone(), &*self.fee_estimator);
 		let mut channel_state = self.channel_state.lock().unwrap();
 		match channel_state.by_id.insert(channel.channel_id(), channel) {
@@ -1457,7 +1460,7 @@ impl ChannelManager {
 			}
 		};
 
-		let channel = Channel::new_from_req(&*self.fee_estimator, chan_keys, their_node_id.clone(), msg, 0, false, self.announce_channels_publicly, Arc::clone(&self.logger)).map_err(|e| MsgHandleErrInternal::from_no_close(e))?;
+		let channel = Channel::new_from_req(&*self.fee_estimator, chan_keys, their_node_id.clone(), msg, 0, false, self.announce_channels_publicly, Arc::clone(&self.logger), &self.configuration).map_err(|e| MsgHandleErrInternal::from_no_close(e))?;
 		let accept_msg = channel.get_accept_channel();
 		channel_state.by_id.insert(channel.channel_id(), channel);
 		Ok(accept_msg)
@@ -1483,8 +1486,7 @@ impl ChannelManager {
 		pending_events.push(events::Event::FundingGenerationReady {
 			temporary_channel_id: msg.temporary_channel_id,
 			channel_value_satoshis: value,
-			output_script: output_script,
-			user_channel_id: user_id,
+			output_script: output_script,			user_channel_id: user_id,
 		});
 		Ok(())
 	}

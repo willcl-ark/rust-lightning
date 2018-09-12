@@ -26,6 +26,7 @@ use util::ser::Writeable;
 use util::sha2::Sha256;
 use util::logger::Logger;
 use util::errors::APIError;
+use util::configurations::UserConfigurations;
 
 use std;
 use std::default::Default;
@@ -259,11 +260,14 @@ const BOTH_SIDES_SHUTDOWN_MASK: u32 = (ChannelState::LocalShutdownSent as u32 | 
 
 const INITIAL_COMMITMENT_NUMBER: u64 = (1 << 48) - 1;
 
+
 // TODO: We should refactor this to be an Inbound/OutboundChannel until initial setup handshaking
 // has been completed, and then turn into a Channel to get compiler-time enforcement of things like
 // calling channel_id() before we're set up or things like get_outbound_funding_signed on an
 // inbound channel.
 pub(super) struct Channel {
+
+	config : UserConfigurations,
 	user_id: u64,
 
 	channel_id: [u8; 32],
@@ -403,7 +407,7 @@ impl Channel {
 	}
 
 	// Constructors:
-	pub fn new_outbound(fee_estimator: &FeeEstimator, chan_keys: ChannelKeys, their_node_id: PublicKey, channel_value_satoshis: u64, push_msat: u64, announce_publicly: bool, user_id: u64, logger: Arc<Logger>) -> Result<Channel, APIError> {
+	pub fn new_outbound(fee_estimator: &FeeEstimator, chan_keys: ChannelKeys, their_node_id: PublicKey, channel_value_satoshis: u64, push_msat: u64, announce_publicly: bool, user_id: u64, logger: Arc<Logger>, configurations: &UserConfigurations) -> Result<Channel, APIError> {
 		if channel_value_satoshis >= MAX_FUNDING_SATOSHIS {
 			return Err(APIError::APIMisuseError{err: "funding value > 2^24"});
 		}
@@ -430,7 +434,7 @@ impl Channel {
 
 		Ok(Channel {
 			user_id: user_id,
-
+			config : configurations.clone(),
 			channel_id: rng::rand_u832(),
 			channel_state: ChannelState::OurInitSent as u32,
 			channel_outbound: true,
@@ -500,7 +504,7 @@ impl Channel {
 	/// Assumes chain_hash has already been checked and corresponds with what we expect!
 	/// Generally prefers to take the DisconnectPeer action on failure, as a notice to the sender
 	/// that we're rejecting the new channel.
-	pub fn new_from_req(fee_estimator: &FeeEstimator, chan_keys: ChannelKeys, their_node_id: PublicKey, msg: &msgs::OpenChannel, user_id: u64, require_announce: bool, allow_announce: bool, logger: Arc<Logger>) -> Result<Channel, HandleError> {
+	pub fn new_from_req(fee_estimator: &FeeEstimator, chan_keys: ChannelKeys, their_node_id: PublicKey, msg: &msgs::OpenChannel, user_id: u64, require_announce: bool, allow_announce: bool, logger: Arc<Logger>, configurations : &UserConfigurations) -> Result<Channel, HandleError> {
 		macro_rules! return_error_message {
 			( $msg: expr ) => {
 				return Err(HandleError{err: $msg, action: Some(msgs::ErrorAction::SendErrorMessage{ msg: msgs::ErrorMessage { channel_id: msg.temporary_channel_id, data: $msg.to_string() }})});
@@ -538,6 +542,26 @@ impl Channel {
 		}
 		if msg.max_accepted_htlcs > 483 {
 			return_error_message!("max_accpted_htlcs > 483");
+		}
+		//optional parameter checking 
+		// MAY fail the channel if
+		if msg.funding_satoshis < configurations.channel_limits.funding_satoshis {
+			return_error_message!("funding satoshis is less than the user specified limit");
+		}
+		if msg.htlc_minimum_msat > configurations.channel_limits.htlc_minimum_msat {
+			return_error_message!("htlc minimum msat is higher than the user specified limit");
+		}
+		if msg.max_htlc_value_in_flight_msat < configurations.channel_limits.max_htlc_value_in_flight_msat {
+			return_error_message!("max htlc value in flight msat is less than the user specified limit");
+		}
+		if msg.channel_reserve_satoshis > configurations.channel_limits.channel_reserve_satoshis {
+			return_error_message!("channel reserve satoshis is higher than the user specified limit");
+		}
+		if msg.max_accepted_htlcs < configurations.channel_limits.max_accepted_htlcs {
+			return_error_message!("max accepted htlcs is less than the user specified limit");
+		}
+		if msg.dust_limit_satoshis < configurations.channel_limits.dust_limit_satoshis {
+			return_error_message!("dust limit satoshis is less than the user specified limit");
 		}
 
 		// Convert things into internal flags and prep our state:
@@ -589,7 +613,7 @@ impl Channel {
 
 		let mut chan = Channel {
 			user_id: user_id,
-
+			config: (*configurations).clone(),
 			channel_id: msg.temporary_channel_id,
 			channel_state: (ChannelState::OurInitSent as u32) | (ChannelState::TheirInitSent as u32),
 			channel_outbound: false,
@@ -1244,15 +1268,6 @@ impl Channel {
 		if msg.max_accepted_htlcs > 483 {
 			return_error_message!("max_accpted_htlcs > 483");
 		}
-
-		// TODO: Optional additional constraints mentioned in the spec
-		// MAY fail the channel if
-		// funding_satoshi is too small
-		// htlc_minimum_msat too large
-		// max_htlc_value_in_flight_msat too small
-		// channel_reserve_satoshis too large
-		// max_accepted_htlcs too small
-		// dust_limit_satoshis too small
 
 		self.channel_monitor.set_their_base_keys(&msg.htlc_basepoint, &msg.delayed_payment_basepoint);
 
@@ -2872,6 +2887,7 @@ mod tests {
 
 	#[test]
 	fn outbound_commitment_test() {
+		use util::configurations::UserConfigurations;
 		// Test vectors from BOLT 3 Appendix C:
 		let feeest = TestFeeEstimator{fee_est: 15000};
 		let logger : Arc<Logger> = Arc::new(test_utils::TestLogger::new());
@@ -2893,7 +2909,7 @@ mod tests {
 				hex::decode("023da092f6980e58d2c037173180e9a465476026ee50f96695963e8efe436f54eb").unwrap()[..]);
 
 		let their_node_id = PublicKey::from_secret_key(&secp_ctx, &SecretKey::from_slice(&secp_ctx, &[42; 32]).unwrap());
-		let mut chan = Channel::new_outbound(&feeest, chan_keys, their_node_id, 10000000, 100000, false, 42, Arc::clone(&logger)).unwrap(); // Nothing uses their network key in this test
+		let mut chan = Channel::new_outbound(&feeest, chan_keys, their_node_id, 10000000, 100000, false, 42, Arc::clone(&logger), &UserConfigurations::new()).unwrap(); // Nothing uses their network key in this test
 		chan.their_to_self_delay = 144;
 		chan.our_dust_limit_satoshis = 546;
 
