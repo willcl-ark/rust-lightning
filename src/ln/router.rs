@@ -77,8 +77,6 @@ impl std::fmt::Display for ChannelInfo {
 	}
 }
 
-
-
 struct NodeInfo {
 	#[cfg(feature = "non_bitcoin_chain_hash_routing")]
 	channels: Vec<(u64, Sha256dHash)>,
