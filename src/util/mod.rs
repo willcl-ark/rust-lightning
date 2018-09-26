@@ -30,4 +30,5 @@ pub use self::rng::reset_rng_state;
 pub(crate) mod test_utils;
 
 pub use self::configurations::UserConfigurations;
+//config struct
 pub mod configurations;
