@@ -26,7 +26,7 @@ use util::ser::Writeable;
 use util::sha2::Sha256;
 use util::logger::Logger;
 use util::errors::APIError;
-use util::configurations::{UserConfigurations,ChannelLimits,ChannelOptions};
+use util::configurations::UserConfigurations;
 
 use std;
 use std::default::Default;
@@ -266,14 +266,13 @@ const INITIAL_COMMITMENT_NUMBER: u64 = (1 << 48) - 1;
 // calling channel_id() before we're set up or things like get_outbound_funding_signed on an
 // inbound channel.
 pub(super) struct Channel {
-	config :  UserConfigurations,
-
 	user_id: u64,
 
 	channel_id: [u8; 32],
 	channel_state: u32,
 	channel_outbound: bool,
 	secp_ctx: Secp256k1<secp256k1::All>,
+	announce_publicly: bool,
 	channel_value_satoshis: u64,
 
 	local_keys: ChannelKeys,
@@ -406,7 +405,7 @@ impl Channel {
 	}
 
 	// Constructors:
-	pub fn new_outbound(fee_estimator: &FeeEstimator, chan_keys: ChannelKeys, their_node_id: PublicKey, channel_value_satoshis: u64, push_msat: u64, user_id: u64, logger: Arc<Logger>, configurations: &UserConfigurations) -> Result<Channel, APIError> {
+	pub fn new_outbound(fee_estimator: &FeeEstimator, chan_keys: ChannelKeys, their_node_id: PublicKey, channel_value_satoshis: u64, push_msat: u64, user_id: u64, logger: Arc<Logger>, config: &UserConfigurations) -> Result<Channel, APIError> {
 		if channel_value_satoshis >= MAX_FUNDING_SATOSHIS {
 			return Err(APIError::APIMisuseError{err: "funding value > 2^24"});
 		}
@@ -433,14 +432,12 @@ impl Channel {
 
 		Ok(Channel {
 			user_id: user_id,
-			config: UserConfigurations{
-				channel_options: configurations.channel_options.clone(),
-				channel_limits : Arc::clone(&configurations.channel_limits),},
 
 			channel_id: rng::rand_u832(),
 			channel_state: ChannelState::OurInitSent as u32,
 			channel_outbound: true,
 			secp_ctx: secp_ctx,
+			announce_publicly: config.channel_options.announced_channel,
 			channel_value_satoshis: channel_value_satoshis,
 
 			local_keys: chan_keys,
@@ -511,7 +508,6 @@ impl Channel {
 				return Err(HandleError{err: $msg, action: Some(msgs::ErrorAction::SendErrorMessage{ msg: msgs::ErrorMessage { channel_id: msg.temporary_channel_id, data: $msg.to_string() }})});
 			}
 		}
-		let mut local_config = (*configurations).channel_options.clone();
 
 		// Check sanity of message fields:
 		if msg.funding_satoshis >= MAX_FUNDING_SATOSHIS {
@@ -569,16 +565,14 @@ impl Channel {
 		// Convert things into internal flags and prep our state:
 
 		let their_announce = if (msg.channel_flags & 1) == 1 { true } else { false };
-		if local_config.force_announced_channel_preference{
-			if local_config.announced_channel && !their_announce {
+		if configurations.channel_options.force_announced_channel_preference{
+			if configurations.channel_options.announced_channel && !their_announce {
 				return_error_message!("Peer tried to open unannounced channel, but we require public ones");
 			}
-			if !local_config.announced_channel && their_announce {
+			if !configurations.channel_options.announced_channel && their_announce {
 				return_error_message!("Peer tried to open announced channel, but we require private ones");
 			}
 		}
-		//we either accept their preference or the preferences match
-		local_config.announced_channel = their_announce;
 
 		let background_feerate = fee_estimator.get_est_sat_per_1000_weight(ConfirmationTarget::Background);
 
@@ -619,14 +613,12 @@ impl Channel {
 
 		let mut chan = Channel {
 			user_id: user_id,
-			config: UserConfigurations{
-				channel_options: local_config,
-				channel_limits : Arc::clone(&configurations.channel_limits),},
 
 			channel_id: msg.temporary_channel_id,
 			channel_state: (ChannelState::OurInitSent as u32) | (ChannelState::TheirInitSent as u32),
 			channel_outbound: false,
 			secp_ctx: secp_ctx,
+			announce_publicly: their_announce,
 
 			local_keys: chan_keys,
 			cur_local_commitment_transaction_number: INITIAL_COMMITMENT_NUMBER,
@@ -1233,7 +1225,7 @@ impl Channel {
 
 	// Message handlers:
 
-	pub fn accept_channel(&mut self, msg: &msgs::AcceptChannel) -> Result<(), HandleError> {
+	pub fn accept_channel(&mut self, msg: &msgs::AcceptChannel, config: &UserConfigurations) -> Result<(), HandleError> {
 		macro_rules! return_error_message {
 			( $msg: expr ) => {
 				return Err(HandleError{err: $msg, action: Some(msgs::ErrorAction::SendErrorMessage{ msg: msgs::ErrorMessage { channel_id: msg.temporary_channel_id, data: $msg.to_string() }})});
@@ -1277,7 +1269,7 @@ impl Channel {
 			return_error_message!("max_accpted_htlcs > 483");
 		}
 		//Optional user definined limits
-		if msg.minimum_depth > self.config.channel_limits.minimum_depth {
+		if msg.minimum_depth > config.channel_limits.minimum_depth {
 			return_error_message!("We consider the minimum depth to be unreasonably large");
 		}
 		self.channel_monitor.set_their_base_keys(&msg.htlc_basepoint, &msg.delayed_payment_basepoint);
@@ -2268,7 +2260,7 @@ impl Channel {
 	}
 
 	pub fn should_announce(&self) -> bool {
-		self.config.channel_options.announced_channel
+		self.announce_publicly
 	}
 
 	/// Gets the fee we'd want to charge for adding an HTLC output to this Channel
@@ -2454,7 +2446,7 @@ impl Channel {
 			delayed_payment_basepoint: PublicKey::from_secret_key(&self.secp_ctx, &self.local_keys.delayed_payment_base_key),
 			htlc_basepoint: PublicKey::from_secret_key(&self.secp_ctx, &self.local_keys.htlc_base_key),
 			first_per_commitment_point: PublicKey::from_secret_key(&self.secp_ctx, &local_commitment_secret),
-			channel_flags: if self.config.channel_options.announced_channel {1} else {0},
+			channel_flags: if self.announce_publicly {1} else {0},
 			shutdown_scriptpubkey: None,
 		}
 	}
@@ -2558,7 +2550,7 @@ impl Channel {
 	/// Note that the "channel must be funded" requirement is stricter than BOLT 7 requires - see
 	/// https://github.com/lightningnetwork/lightning-rfc/issues/468
 	pub fn get_channel_announcement(&self, our_node_id: PublicKey, chain_hash: Sha256dHash) -> Result<(msgs::UnsignedChannelAnnouncement, Signature), HandleError> {
-		if !self.config.channel_options.announced_channel {
+		if !self.announce_publicly {
 			return Err(HandleError{err: "Channel is not available for public announcements", action: Some(msgs::ErrorAction::IgnoreError)});
 		}
 		if self.channel_state & (ChannelState::ChannelFunded as u32) == 0 {

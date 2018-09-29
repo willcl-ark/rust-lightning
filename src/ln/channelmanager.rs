@@ -1469,7 +1469,7 @@ impl ChannelManager {
 						//TODO: see issue #153, need a consistent behavior on obnoxious behavior from random node
 						return Err(MsgHandleErrInternal::send_err_msg_no_close("Got a message for a channel from the wrong node!", msg.temporary_channel_id));
 					}
-					chan.accept_channel(&msg).map_err(|e| MsgHandleErrInternal::from_maybe_close(e))?;
+					chan.accept_channel(&msg, &self.configuration).map_err(|e| MsgHandleErrInternal::from_maybe_close(e))?;
 					(chan.get_value_satoshis(), chan.get_funding_redeemscript().to_v0_p2wsh(), chan.get_user_id())
 				},
 				//TODO: same as above
