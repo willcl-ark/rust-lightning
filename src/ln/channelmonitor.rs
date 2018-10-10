@@ -31,6 +31,7 @@ use ln::chan_utils;
 use ln::chan_utils::HTLCOutputInCommitment;
 use ln::channelmanager::{HTLCSource, HTLCPreviousHopData};
 use ln::router::{Route, RouteHop};
+use ln::channel::{ACCEPTED_HTLC_SCRIPT_WEIGHT, OFFERED_HTLC_SCRIPT_WEIGHT};
 use chain::chaininterface::{ChainListener, ChainWatchInterface, BroadcasterInterface};
 use chain::transaction::OutPoint;
 use chain::keysinterface::SpendableOutputDescriptor;
@@ -1915,12 +1916,12 @@ impl ChannelMonitor {
 				if payment_data.0.is_some() && payment_data.2.is_some() {
 					let mut payment_preimage = [0; 32];
 					let mut preimage = None;
-					if input.witness.len() == 5 && input.witness[4].len() == 138 {
+					if input.witness.len() == 5 && input.witness[4].len() == ACCEPTED_HTLC_SCRIPT_WEIGHT {
 						for (arr, vec) in payment_preimage.iter_mut().zip(tx.input[0].witness[3].iter()) {
 							*arr = *vec;
 						}
 						preimage = Some(payment_preimage);
-					} else if input.witness.len() == 3 && input.witness[2].len() == 133 {
+					} else if input.witness.len() == 3 && input.witness[2].len() == OFFERED_HTLC_SCRIPT_WEIGHT {
 						for (arr, vec) in payment_preimage.iter_mut().zip(tx.input[0].witness[1].iter()) {
 							*arr = *vec;
 						}
