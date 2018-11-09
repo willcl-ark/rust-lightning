@@ -3,7 +3,7 @@ use chain::chaininterface::ConfirmationTarget;
 use chain::transaction::OutPoint;
 use ln::channelmonitor;
 use ln::msgs;
-use ln::msgs::{HandleError, InitSyncTracker};
+use ln::msgs::{HandleError};
 use util::events;
 use util::logger::{Logger, Level, Record};
 use util::ser::{ReadableArgs, Writer};
@@ -168,10 +168,10 @@ impl msgs::RoutingMessageHandler for TestRoutingMessageHandler {
 		Err(HandleError { err: "", action: None })
 	}
 	fn handle_htlc_fail_channel_update(&self, _update: &msgs::HTLCFailChannelUpdate) {}
-	fn get_next_channel_announcements(&self, _starting_point: &mut InitSyncTracker, _batch_amount: u8)->(Vec<(msgs::ChannelAnnouncement, msgs::ChannelUpdate,msgs::ChannelUpdate)>){
+	fn get_next_channel_announcements(&self, _starting_point: u64, _batch_amount: u8) -> Vec<(msgs::ChannelAnnouncement, msgs::ChannelUpdate,msgs::ChannelUpdate)> {
 		Vec::new()
 	}
-	fn get_next_node_announcements(&self, _starting_point: &mut InitSyncTracker, _batch_amount: u8)->(Vec<msgs::NodeAnnouncement>){
+	fn get_next_node_announcements(&self, _starting_point: Option<&PublicKey>, _batch_amount: u8) -> Vec<msgs::NodeAnnouncement> {
 		Vec::new()
 	}
 }

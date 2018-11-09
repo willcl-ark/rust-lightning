@@ -88,6 +88,12 @@ impl error::Error for PeerHandleError {
 	}
 }
 
+enum InitSyncTracker{
+	NoSyncRequested,
+	ChannelsSyncing(u64),
+	NodesSyncing(PublicKey),
+}
+
 struct Peer {
 	channel_encryptor: PeerChannelEncryptor,
 	outbound: bool,
@@ -102,22 +108,22 @@ struct Peer {
 	pending_read_buffer: Vec<u8>,
 	pending_read_buffer_pos: usize,
 	pending_read_is_header: bool,
-	sync_status : msgs::InitSyncTracker,
+
+	sync_status: InitSyncTracker,
 }
 
 impl Peer {
-	pub fn require_sync(&self)->bool{
-		if let msgs::InitSyncTracker::Sync(i) = self.sync_status {i} else {false}
-	}
-
-	/// this function checks if the the channel announcements and updates are allowed to be forwarded to a specific peer.
-	/// If the peer is in syncing state and the channel_id has not been synced then the function returns false as this info will forward at a later stage and
-	/// we dont want to send duplicate messages. If the channel was already synced then we can forward those messages and the function will then return true.
-	pub fn is_channel_allowed_to_forward(&self, channel_id : u64)->bool{
+	/// Returns true if the the channel announcements/updates for the given channel should be
+	/// forwarded to this peer.
+	/// If we are sending our routing table to this peer and we have not yet sent channel
+	/// announcements/updates for the given channel_id then we will send it when we get to that
+	/// point and we shouldn't send it yet to avoid sending duplicate updates. If we've already
+	/// sent the old versions, we should send the update, and so return true here.
+	fn should_forward_channel(&self, channel_id: u64)->bool{
 		match self.sync_status {
-		msgs::InitSyncTracker::Sync(i) => !i,
-		msgs::InitSyncTracker::NodeCounter(_i) => false,
-		msgs::InitSyncTracker::ChannelCounter(i) => (i < channel_id),
+			InitSyncTracker::NoSyncRequested => true,
+			InitSyncTracker::ChannelsSyncing(i) => i < channel_id,
+			InitSyncTracker::NodesSyncing(_) => true,
 		}
 	}
 }
@@ -239,7 +245,8 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 			pending_read_buffer: pending_read_buffer,
 			pending_read_buffer_pos: 0,
 			pending_read_is_header: false,
-			sync_status : msgs::InitSyncTracker::Sync(false),
+
+			sync_status: InitSyncTracker::NoSyncRequested,
 		}).is_some() {
 			panic!("PeerManager driver duplicated descriptors!");
 		};
@@ -274,7 +281,8 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 			pending_read_buffer: pending_read_buffer,
 			pending_read_buffer_pos: 0,
 			pending_read_is_header: false,
-			sync_status : msgs::InitSyncTracker::Sync(false),
+
+			sync_status: InitSyncTracker::NoSyncRequested,
 		}).is_some() {
 			panic!("PeerManager driver duplicated descriptors!");
 		};
@@ -285,36 +293,63 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 		macro_rules! encode_and_send_msg {
 			($msg: expr, $msg_code: expr) => {
 				{
-					log_trace!(self, "Encoding and sending message of type {} to {}", $msg_code, log_pubkey!(peer.their_node_id.unwrap()));
+					log_trace!(self, "Encoding and sending sync update message of type {} to {}", $msg_code, log_pubkey!(peer.their_node_id.unwrap()));
 					peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encode_msg!($msg, $msg_code)[..]));
 				}
 			}
 		}
+		const MSG_BUFF_SIZE: usize = 10;
 		while !peer.awaiting_write_event {
-			if {
-				let should_be_reading = peer.pending_outbound_buffer.len() < 10;
-				if (peer.require_sync()) &&(should_be_reading){
-					match peer.sync_status{
-						msgs::InitSyncTracker::ChannelCounter(_c) => {
-						let all_messages_tuple = self.message_handler.route_handler.get_next_channel_announcements(&mut peer.sync_status,(10-peer.pending_outbound_buffer.len()) as u8);
-						for tuple in all_messages_tuple.iter(){
-							encode_and_send_msg!(tuple.0, 256);
-							encode_and_send_msg!(tuple.1, 258);
-							encode_and_send_msg!(tuple.2, 258);
+			if peer.pending_outbound_buffer.len() < MSG_BUFF_SIZE {
+				match peer.sync_status {
+					InitSyncTracker::NoSyncRequested => {},
+					InitSyncTracker::ChannelsSyncing(c) if c < 0xffff_ffff_ffff_ffff => {
+						let steps = ((MSG_BUFF_SIZE - peer.pending_outbound_buffer.len() + 2) / 3) as u8;
+						let all_messages = self.message_handler.route_handler.get_next_channel_announcements(0, steps);
+						for &(ref announce, ref update_a, ref update_b) in all_messages.iter() {
+							encode_and_send_msg!(announce, 256);
+							encode_and_send_msg!(update_a, 258);
+							encode_and_send_msg!(update_b, 258);
+							peer.sync_status = InitSyncTracker::ChannelsSyncing(announce.contents.short_channel_id + 1);
 						}
-						},
-						_=>{let all_messages = self.message_handler.route_handler.get_next_node_announcements(&mut peer.sync_status,(10-peer.pending_outbound_buffer.len()) as u8);
-						for message in all_messages.iter(){
-							encode_and_send_msg!(message, 256);
-						}},
-					};
+						if all_messages.is_empty() || all_messages.len() != steps as usize {
+							peer.sync_status = InitSyncTracker::ChannelsSyncing(0xffff_ffff_ffff_ffff);
+						}
+					},
+					InitSyncTracker::ChannelsSyncing(c) if c == 0xffff_ffff_ffff_ffff => {
+						let steps = (MSG_BUFF_SIZE - peer.pending_outbound_buffer.len()) as u8;
+						let all_messages = self.message_handler.route_handler.get_next_node_announcements(None, steps);
+						for msg in all_messages.iter() {
+							encode_and_send_msg!(msg, 256);
+							peer.sync_status = InitSyncTracker::NodesSyncing(msg.contents.node_id);
+						}
+						if all_messages.is_empty() || all_messages.len() != steps as usize {
+							peer.sync_status = InitSyncTracker::NoSyncRequested;
+						}
+					},
+					InitSyncTracker::ChannelsSyncing(_) => unreachable!(),
+					InitSyncTracker::NodesSyncing(key) => {
+						let steps = (MSG_BUFF_SIZE - peer.pending_outbound_buffer.len()) as u8;
+						let all_messages = self.message_handler.route_handler.get_next_node_announcements(Some(&key), steps);
+						for msg in all_messages.iter() {
+							encode_and_send_msg!(msg, 256);
+							peer.sync_status = InitSyncTracker::NodesSyncing(msg.contents.node_id);
+						}
+						if all_messages.is_empty() || all_messages.len() != steps as usize {
+							peer.sync_status = InitSyncTracker::NoSyncRequested;
+						}
+					},
 				}
+			}
+
+			if {
 				let next_buff = match peer.pending_outbound_buffer.front() {
 					None => return,
 					Some(buff) => buff,
 				};
 
-				let data_sent = descriptor.send_data(&next_buff, peer.pending_outbound_buffer_first_msg_offset, should_be_reading);
+				let should_be_reading = peer.pending_outbound_buffer.len() < MSG_BUFF_SIZE;
+				let data_sent = descriptor.send_data(next_buff, peer.pending_outbound_buffer_first_msg_offset, should_be_reading);
 				peer.pending_outbound_buffer_first_msg_offset += data_sent;
 				if peer.pending_outbound_buffer_first_msg_offset == next_buff.len() { true } else { false }
 			} {
@@ -567,7 +602,7 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 													if msg.global_features.supports_unknown_bits() { "present" } else { "none" });
 
 												if msg.local_features.initial_routing_sync() {
-													peer.sync_status = msgs::InitSyncTracker::Sync(true); 
+													peer.sync_status = InitSyncTracker::ChannelsSyncing(0);
 													peers.peers_needing_send.insert(peer_descriptor.clone());
 												}
 												peer.their_global_features = Some(msg.global_features);
@@ -915,7 +950,8 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 							let encoded_update_msg = encode_msg!(update_msg, 258);
 
 							for (ref descriptor, ref mut peer) in peers.peers.iter_mut() {
-								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_global_features.is_none() ||!peer.is_channel_allowed_to_forward(msg.contents.short_channel_id) {
+								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_global_features.is_none() ||
+										!peer.should_forward_channel(msg.contents.short_channel_id) {
 									continue
 								}
 								match peer.their_node_id {
@@ -938,7 +974,8 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 							let encoded_msg = encode_msg!(msg, 258);
 
 							for (ref descriptor, ref mut peer) in peers.peers.iter_mut() {
-								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_global_features.is_none() || !peer.is_channel_allowed_to_forward(msg.contents.short_channel_id)  {
+								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_global_features.is_none() ||
+										!peer.should_forward_channel(msg.contents.short_channel_id)  {
 									continue
 								}
 								peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encoded_msg[..]));
