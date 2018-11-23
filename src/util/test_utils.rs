@@ -4,7 +4,7 @@ use chain::transaction::OutPoint;
 use ln::channelmonitor;
 use ln::msgs;
 use ln::msgs::{HandleError};
-use ln::channelmanager::HTLCSource;
+use ln::channelmanager::{HTLCSource, PaymentPreimage, PaymentHash};
 use util::events;
 use util::logger::{Logger, Level, Record};
 use util::ser::{ReadableArgs, Writer};
@@ -66,7 +66,7 @@ impl channelmonitor::ManyChannelMonitor for TestChannelMonitor {
 		self.update_ret.lock().unwrap().clone()
 	}
 
-	fn fetch_pending_htlc_updated(&self) -> Vec<([u8; 32], Option<[u8; 32]>, Option<HTLCSource>)> {
+	fn fetch_pending_htlc_updated(&self) -> Vec<(PaymentHash, Option<PaymentPreimage>, Option<HTLCSource>)> {
 		return self.simple_monitor.fetch_pending_htlc_updated();
 	}
 }

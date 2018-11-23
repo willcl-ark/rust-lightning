@@ -29,7 +29,7 @@ use secp256k1;
 use ln::msgs::DecodeError;
 use ln::chan_utils;
 use ln::chan_utils::HTLCOutputInCommitment;
-use ln::channelmanager::{HTLCSource, HTLCPreviousHopData};
+use ln::channelmanager::{HTLCSource, HTLCPreviousHopData, PaymentPreimage, PaymentHash};
 use ln::router::{Route, RouteHop};
 use ln::channel::{ACCEPTED_HTLC_SCRIPT_WEIGHT, OFFERED_HTLC_SCRIPT_WEIGHT};
 use chain::chaininterface::{ChainListener, ChainWatchInterface, BroadcasterInterface};
@@ -104,7 +104,7 @@ pub trait ManyChannelMonitor: Send + Sync {
 
 	/// Used by ChannelManager to get list of HTLC resolved onchain and which needed to be updated
 	/// with success or failure backward
-	fn fetch_pending_htlc_updated(&self) -> Vec<([u8; 32], Option<[u8; 32]>, Option<HTLCSource>)>;
+	fn fetch_pending_htlc_updated(&self) -> Vec<(PaymentHash, Option<PaymentPreimage>, Option<HTLCSource>)>;
 }
 
 /// A simple implementation of a ManyChannelMonitor and ChainListener. Can be used to create a
@@ -126,7 +126,7 @@ pub struct SimpleManyChannelMonitor<Key> {
 	chain_monitor: Arc<ChainWatchInterface>,
 	broadcaster: Arc<BroadcasterInterface>,
 	pending_events: Mutex<Vec<events::Event>>,
-	pending_htlc_updated: Mutex<HashMap<[u8; 32], Vec<(Option<[u8; 32]>, Option<HTLCSource>)>>>,
+	pending_htlc_updated: Mutex<HashMap<PaymentHash, Vec<(Option<PaymentPreimage>, Option<HTLCSource>)>>>,
 	logger: Arc<Logger>,
 }
 
@@ -286,7 +286,7 @@ impl ManyChannelMonitor for SimpleManyChannelMonitor<OutPoint> {
 		}
 	}
 
-	fn fetch_pending_htlc_updated(&self) -> Vec<([u8; 32], Option<[u8; 32]>, Option<HTLCSource>)> {
+	fn fetch_pending_htlc_updated(&self) -> Vec<(PaymentHash, Option<PaymentPreimage>, Option<HTLCSource>)> {
 		let mut updated = self.pending_htlc_updated.lock().unwrap();
 		let mut pending_htlcs_updated = Vec::with_capacity(updated.len());
 		for (k, v) in updated.drain() {
@@ -386,7 +386,7 @@ pub struct ChannelMonitor {
 	/// Maps payment_hash values to commitment numbers for remote transactions for non-revoked
 	/// remote transactions (ie should remain pretty small).
 	/// Serialized to disk but should generally not be sent to Watchtowers.
-	remote_hash_commitment_number: HashMap<[u8; 32], u64>,
+	remote_hash_commitment_number: HashMap<PaymentHash, u64>,
 
 	// We store two local commitment transactions to avoid any race conditions where we may update
 	// some monitors (potentially on watchtowers) but then fail to update others, resulting in the
@@ -399,7 +399,7 @@ pub struct ChannelMonitor {
 	// deserialization
 	current_remote_commitment_number: u64,
 
-	payment_preimages: HashMap<[u8; 32], [u8; 32]>,
+	payment_preimages: HashMap<PaymentHash, PaymentPreimage>,
 
 	destination_script: Script,
 
@@ -639,7 +639,7 @@ impl ChannelMonitor {
 
 	/// Provides a payment_hash->payment_preimage mapping. Will be automatically pruned when all
 	/// commitment_tx_infos which contain the payment hash have been revoked.
-	pub(super) fn provide_payment_preimage(&mut self, payment_hash: &[u8; 32], payment_preimage: &[u8; 32]) {
+	pub(super) fn provide_payment_preimage(&mut self, payment_hash: &PaymentHash, payment_preimage: &PaymentPreimage) {
 		self.payment_preimages.insert(payment_hash.clone(), payment_preimage.clone());
 	}
 
@@ -936,7 +936,7 @@ impl ChannelMonitor {
 				writer.write_all(&[$htlc_output.offered as u8; 1])?;
 				writer.write_all(&byte_utils::be64_to_array($htlc_output.amount_msat))?;
 				writer.write_all(&byte_utils::be32_to_array($htlc_output.cltv_expiry))?;
-				writer.write_all(&$htlc_output.payment_hash)?;
+				writer.write_all(&$htlc_output.payment_hash.0[..])?;
 				writer.write_all(&byte_utils::be32_to_array($htlc_output.transaction_output_index))?;
 			}
 		}
@@ -1008,7 +1008,7 @@ impl ChannelMonitor {
 		if for_local_storage {
 			writer.write_all(&byte_utils::be64_to_array(self.remote_hash_commitment_number.len() as u64))?;
 			for (ref payment_hash, commitment_number) in self.remote_hash_commitment_number.iter() {
-				writer.write_all(*payment_hash)?;
+				writer.write_all(&payment_hash.0[..])?;
 				writer.write_all(&byte_utils::be48_to_array(*commitment_number))?;
 			}
 		} else {
@@ -1062,7 +1062,7 @@ impl ChannelMonitor {
 
 		writer.write_all(&byte_utils::be64_to_array(self.payment_preimages.len() as u64))?;
 		for payment_preimage in self.payment_preimages.values() {
-			writer.write_all(payment_preimage)?;
+			writer.write_all(&payment_preimage.0[..])?;
 		}
 
 		self.last_block_hash.write(writer)?;
@@ -1441,7 +1441,7 @@ impl ChannelMonitor {
 									}),
 								};
 								let sighash_parts = bip143::SighashComponents::new(&single_htlc_tx);
-								sign_input!(sighash_parts, single_htlc_tx.input[0], htlc.amount_msat / 1000, payment_preimage.to_vec());
+								sign_input!(sighash_parts, single_htlc_tx.input[0], htlc.amount_msat / 1000, payment_preimage.0.to_vec());
 								spendable_outputs.push(SpendableOutputDescriptor::StaticOutput {
 									outpoint: BitcoinOutPoint { txid: single_htlc_tx.txid(), vout: 0 },
 									output: single_htlc_tx.output[0].clone(),
@@ -1492,7 +1492,7 @@ impl ChannelMonitor {
 
 					for input in spend_tx.input.iter_mut() {
 						let value = values_drain.next().unwrap();
-						sign_input!(sighash_parts, input, value.0, value.1.to_vec());
+						sign_input!(sighash_parts, input, value.0, (value.1).0.to_vec());
 					}
 
 					spendable_outputs.push(SpendableOutputDescriptor::StaticOutput {
@@ -1653,7 +1653,7 @@ impl ChannelMonitor {
 					htlc_success_tx.input[0].witness.push(our_sig.serialize_der(&self.secp_ctx).to_vec());
 					htlc_success_tx.input[0].witness[2].push(SigHashType::All as u8);
 
-					htlc_success_tx.input[0].witness.push(payment_preimage.to_vec());
+					htlc_success_tx.input[0].witness.push(payment_preimage.0.to_vec());
 					htlc_success_tx.input[0].witness.push(chan_utils::get_htlc_redeemscript_with_explicit_keys(htlc, &local_tx.a_htlc_key, &local_tx.b_htlc_key, &local_tx.revocation_key).into_bytes());
 
 					add_dynamic_output!(htlc_success_tx, 0);
@@ -1744,7 +1744,7 @@ impl ChannelMonitor {
 		}
 	}
 
-	fn block_connected(&mut self, txn_matched: &[&Transaction], height: u32, block_hash: &Sha256dHash, broadcaster: &BroadcasterInterface)-> (Vec<(Sha256dHash, Vec<TxOut>)>, Vec<SpendableOutputDescriptor>, Vec<(Option<HTLCSource>, Option<[u8 ; 32]>, [u8; 32])>) {
+	fn block_connected(&mut self, txn_matched: &[&Transaction], height: u32, block_hash: &Sha256dHash, broadcaster: &BroadcasterInterface)-> (Vec<(Sha256dHash, Vec<TxOut>)>, Vec<SpendableOutputDescriptor>, Vec<(Option<HTLCSource>, Option<PaymentPreimage>, PaymentHash)>) {
 		let mut watch_outputs = Vec::new();
 		let mut spendable_outputs = Vec::new();
 		let mut htlc_updated = Vec::new();
@@ -1867,7 +1867,7 @@ impl ChannelMonitor {
 		false
 	}
 
-	pub(crate) fn is_resolving_output(&mut self, tx: &Transaction) -> Vec<(Option<HTLCSource>, Option<[u8;32]>, [u8;32])> {
+	pub(crate) fn is_resolving_output(&mut self, tx: &Transaction) -> Vec<(Option<HTLCSource>, Option<PaymentPreimage>, PaymentHash)> {
 		let mut htlc_updated = Vec::new();
 
 		let commitment_number = 0xffffffffffff - ((((tx.input[0].sequence as u64 & 0xffffff) << 3*8) | (tx.lock_time as u64 & 0xffffff)) ^ self.commitment_transaction_number_obscure_factor);
@@ -1885,7 +1885,7 @@ impl ChannelMonitor {
 			// No need to check remote_claimabe_outpoints, symmetric HTLCSource must be present as per-htlc data on local commitment tx
 		} else if tx.input.len() > 0{
 			for input in &tx.input {
-				let mut payment_data: (Option<HTLCSource>, Option<[u8;32]>, Option<[u8;32]>) =  (None, None, None);
+				let mut payment_data: (Option<HTLCSource>, Option<PaymentPreimage>, Option<PaymentHash>) =  (None, None, None);
 				if let Some(ref current_local_signed_commitment_tx) = self.current_local_signed_commitment_tx {
 					if input.previous_output.txid == current_local_signed_commitment_tx.txid {
 						for htlc_output in &current_local_signed_commitment_tx.htlc_outputs {
@@ -1914,15 +1914,15 @@ impl ChannelMonitor {
 				// If tx isn't solving htlc output from local/remote commitment tx and htlc isn't outbound we don't need
 				// to broadcast solving backward
 				if payment_data.0.is_some() && payment_data.2.is_some() {
-					let mut payment_preimage = [0; 32];
+					let mut payment_preimage = PaymentPreimage([0; 32]);
 					let mut preimage = None;
 					if input.witness.len() == 5 && input.witness[4].len() == ACCEPTED_HTLC_SCRIPT_WEIGHT {
-						for (arr, vec) in payment_preimage.iter_mut().zip(tx.input[0].witness[3].iter()) {
+						for (arr, vec) in payment_preimage.0.iter_mut().zip(tx.input[0].witness[3].iter()) {
 							*arr = *vec;
 						}
 						preimage = Some(payment_preimage);
 					} else if input.witness.len() == 3 && input.witness[2].len() == OFFERED_HTLC_SCRIPT_WEIGHT {
-						for (arr, vec) in payment_preimage.iter_mut().zip(tx.input[0].witness[1].iter()) {
+						for (arr, vec) in payment_preimage.0.iter_mut().zip(tx.input[0].witness[1].iter()) {
 							*arr = *vec;
 						}
 						preimage = Some(payment_preimage);
@@ -2035,7 +2035,7 @@ impl<R: ::std::io::Read> ReadableArgs<R, Arc<Logger>> for (Sha256dHash, ChannelM
 					let offered: bool = Readable::read(reader)?;
 					let amount_msat: u64 = Readable::read(reader)?;
 					let cltv_expiry: u32 = Readable::read(reader)?;
-					let payment_hash: [u8; 32] = Readable::read(reader)?;
+					let payment_hash: PaymentHash = Readable::read(reader)?;
 					let transaction_output_index: u32 = Readable::read(reader)?;
 
 					HTLCOutputInCommitment {
@@ -2145,9 +2145,9 @@ impl<R: ::std::io::Read> ReadableArgs<R, Arc<Logger>> for (Sha256dHash, ChannelM
 		let remote_hash_commitment_number_len: u64 = Readable::read(reader)?;
 		let mut remote_hash_commitment_number = HashMap::with_capacity(cmp::min(remote_hash_commitment_number_len as usize, MAX_ALLOC_SIZE / 32));
 		for _ in 0..remote_hash_commitment_number_len {
-			let txid: [u8; 32] = Readable::read(reader)?;
+			let payment_hash: PaymentHash = Readable::read(reader)?;
 			let commitment_number = <U48 as Readable<R>>::read(reader)?.0;
-			if let Some(_) = remote_hash_commitment_number.insert(txid, commitment_number) {
+			if let Some(_) = remote_hash_commitment_number.insert(payment_hash, commitment_number) {
 				return Err(DecodeError::InvalidValue);
 			}
 		}
@@ -2213,11 +2213,11 @@ impl<R: ::std::io::Read> ReadableArgs<R, Arc<Logger>> for (Sha256dHash, ChannelM
 		let mut payment_preimages = HashMap::with_capacity(cmp::min(payment_preimages_len as usize, MAX_ALLOC_SIZE / 32));
 		let mut sha = Sha256::new();
 		for _ in 0..payment_preimages_len {
-			let preimage: [u8; 32] = Readable::read(reader)?;
+			let preimage: PaymentPreimage = Readable::read(reader)?;
 			sha.reset();
-			sha.input(&preimage);
-			let mut hash = [0; 32];
-			sha.result(&mut hash);
+			sha.input(&preimage.0[..]);
+			let mut hash = PaymentHash([0; 32]);
+			sha.result(&mut hash.0[..]);
 			if let Some(_) = payment_preimages.insert(hash, preimage) {
 				return Err(DecodeError::InvalidValue);
 			}
@@ -2263,6 +2263,7 @@ mod tests {
 	use bitcoin::blockdata::transaction::Transaction;
 	use crypto::digest::Digest;
 	use hex;
+	use ln::channelmanager::{PaymentPreimage, PaymentHash};
 	use ln::channelmonitor::ChannelMonitor;
 	use ln::chan_utils::{HTLCOutputInCommitment, TxCreationKeys};
 	use ln::channelmanager::{HTLCSource, HTLCPreviousHopData};
@@ -2656,12 +2657,12 @@ mod tests {
 		{
 			let mut rng  = thread_rng();
 			for _ in 0..20 {
-				let mut preimage = [0; 32];
-				rng.fill_bytes(&mut preimage);
+				let mut preimage = PaymentPreimage([0; 32]);
+				rng.fill_bytes(&mut preimage.0[..]);
 				let mut sha = Sha256::new();
-				sha.input(&preimage);
-				let mut hash = [0; 32];
-				sha.result(&mut hash);
+				sha.input(&preimage.0[..]);
+				let mut hash = PaymentHash([0; 32]);
+				sha.result(&mut hash.0[..]);
 				preimages.push((preimage, hash));
 			}
 		}
