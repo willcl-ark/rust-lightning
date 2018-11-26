@@ -265,6 +265,10 @@ impl KeysInterface for KeyProvider {
 			}
 		}
 	}
+
+	fn get_session_key(&self) -> SecretKey {
+		SecretKey::from_slice(&Secp256k1::without_caps(), &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap()
+	}
 }
 
 #[inline]
