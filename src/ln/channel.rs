@@ -2850,9 +2850,11 @@ impl Channel {
 							}
 						}
 						self.funding_tx_confirmations = 1;
-						self.short_channel_id = Some(((height as u64)          << (5*8)) |
-						                             ((*index_in_block as u64) << (2*8)) |
-						                             ((txo_idx as u64)         << (0*8)));
+						let short_channel_id = ((height as u64)          << (5*8)) |
+									((*index_in_block as u64) << (2*8)) |
+									((txo_idx as u64)         << (0*8));
+						self.channel_monitor.set_short_channel_id(short_channel_id);
+						self.short_channel_id = Some(short_channel_id);
 					}
 				}
 			}
