@@ -1140,10 +1140,17 @@ impl Channel {
 		for (idx, htlc) in self.pending_inbound_htlcs.iter().enumerate() {
 			if htlc.htlc_id == htlc_id_arg {
 				assert_eq!(htlc.payment_hash, payment_hash_calc);
-				if let InboundHTLCState::Committed = htlc.state {
-				} else {
-					debug_assert!(false, "Have an inbound HTLC we tried to claim before it was fully committed to");
-					// Don't return in release mode here so that we can update channel_monitor
+				match htlc.state {
+					InboundHTLCState::Committed => {},
+					InboundHTLCState::LocalRemoved(_) => {
+						//TODO (ariard) We may have spurrious HTLC update events from ChannelMonitor due to block re-scan
+						// Should we discard them ?
+						return Ok((None, None));
+					},
+					_ => {
+						debug_assert!(false, "Have an inbound HTLC we tried to claim before it was fully committed to");
+						// Don't return in release mode here so that we can update channel_monitor
+					}
 				}
 				pending_idx = idx;
 				break;
@@ -1226,10 +1233,17 @@ impl Channel {
 		let mut pending_idx = std::usize::MAX;
 		for (idx, htlc) in self.pending_inbound_htlcs.iter().enumerate() {
 			if htlc.htlc_id == htlc_id_arg {
-				if let InboundHTLCState::Committed = htlc.state {
-				} else {
-					debug_assert!(false, "Have an inbound HTLC we tried to fail before it was fully committed to");
-					return Err(ChannelError::Ignore("Unable to find a pending HTLC which matched the given HTLC ID"));
+				match htlc.state {
+					InboundHTLCState::Committed => {},
+					InboundHTLCState::LocalRemoved(_) => {
+						//TODO (ariard) We may have spurrious HTLC update events from ChannelMonitor due to block re-scan
+						// Should we discard them ?
+						return Ok(None);
+					},
+					_ => {
+						debug_assert!(false, "Have an inbound HTLC we tried to claim before it was fully committed to");
+						// Don't return in release mode here so that we can update channel_monitor
+					}
 				}
 				pending_idx = idx;
 			}
