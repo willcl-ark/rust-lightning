@@ -1232,6 +1232,8 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 	/// If a payment_secret *is* provided, we assume that the invoice had the basic_mpp feature bit
 	/// set (either as required or as available).
 	pub fn send_payment(&self, route: Route, payment_hash: PaymentHash, payment_secret: Option<&[u8; 32]>) -> Result<(), PaymentSendFailure> {
+// TODO: Check CLTV value is sane cause it may be a timestamp
+// TODO: Send out via future-async-forwardable, not instantly!
 		if route.paths.len() < 1 {
 			return Err(PaymentSendFailure::ParameterError(APIError::RouteError{err: "There must be at least one path to send over"}));
 		}

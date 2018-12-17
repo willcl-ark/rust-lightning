@@ -1721,3 +1721,7 @@ fn during_funding_monitor_fail() {
 	do_during_funding_monitor_fail(true, true, true, true, false);
 	do_during_funding_monitor_fail(true, true, false, false, false);
 }
+
+//TODO: Add a test that creates a channel, but in the inbound direction the monitor update fails to
+//persist on funding_signed, but the channelmanager gets persisted, and then when we reload it from
+//disk, we need to make sure the channel gets closed!
