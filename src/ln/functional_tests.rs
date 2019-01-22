@@ -6713,8 +6713,6 @@ fn test_update_add_htlc_bolt2_sender_exceed_max_htlc_value_in_flight() {
 // BOLT 2 Requirements for the Receiver when handling an update_add_htlc message.
 #[test]
 fn test_update_add_htlc_bolt2_receiver_check_amount_received_more_than_min() {
-	use super::msgs::HandleError;
-
 	//BOLT2 Requirement: receiving an amount_msat equal to 0, OR less than its own htlc_minimum_msat -> SHOULD fail the channel.
 	let mut nodes = create_network(2);
 	let chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 95000000);
@@ -6731,7 +6729,7 @@ fn test_update_add_htlc_bolt2_receiver_check_amount_received_more_than_min() {
 	let mut updates = get_htlc_update_msgs!(nodes[0], nodes[1].node.get_our_node_id());
 	updates.update_add_htlcs[0].amount_msat = htlc_minimum_msat-1;
 	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
-	if let Err(HandleError{err, action: _}) = err {
+	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
 		assert_eq!(err, "Remote side tried to send less than our minimum HTLC value");
 	} else {
 		assert!(false);
@@ -6742,8 +6740,6 @@ fn test_update_add_htlc_bolt2_receiver_check_amount_received_more_than_min() {
 
 #[test]
 fn test_update_add_htlc_bolt2_receiver_sender_can_afford_amount_sent() {
-	use super::msgs::HandleError;
-
 	//BOLT2 Requirement: receiving an amount_msat that the sending node cannot afford at the current feerate_per_kw (while maintaining its channel reserve): SHOULD fail the channel
 	let mut nodes = create_network(2);
 	let chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 95000000);
@@ -6759,7 +6755,7 @@ fn test_update_add_htlc_bolt2_receiver_sender_can_afford_amount_sent() {
 	updates.update_add_htlcs[0].amount_msat = 5000000-their_channel_reserve+1;
 	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
 
-	if let Err(HandleError{err, action: _}) = err {
+	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
 		assert_eq!(err, "Remote HTLC add would put them over their reserve value");
 	} else {
 		assert!(false);
@@ -6773,7 +6769,6 @@ fn test_update_add_htlc_bolt2_receiver_sender_can_afford_amount_sent() {
 fn test_update_add_htlc_bolt2_receiver_check_max_htlc_limit() {
 	use util::rng;
 	let secp_ctx = Secp256k1::new();
-	use super::msgs::HandleError;
 
 	//BOLT 2 Requirement: if a sending node adds more than its max_accepted_htlcs HTLCs to its local commitment transaction: SHOULD fail the channel
 	//BOLT 2 Requirement: MUST allow multiple HTLCs with the same payment_hash.
@@ -6809,7 +6804,7 @@ fn test_update_add_htlc_bolt2_receiver_check_max_htlc_limit() {
 	msg.htlc_id = (super::channel::OUR_MAX_HTLCS) as u64;
 	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &msg);
 
-	if let Err(HandleError{err, action: _}) = err {
+	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
 		assert_eq!(err, "Remote tried to push more than our max accepted HTLCs");
 	} else {
 		assert!(false);
@@ -6821,8 +6816,6 @@ fn test_update_add_htlc_bolt2_receiver_check_max_htlc_limit() {
 
 #[test]
 fn test_update_add_htlc_bolt2_receiver_check_max_in_flight_msat() {
-	use super::msgs::HandleError;
-
 	//OR adds more than its max_htlc_value_in_flight_msat worth of offered HTLCs to its local commitment transaction: SHOULD fail the channel
 	let mut nodes = create_network(2);
 	let chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 1000000, 1000000);
@@ -6834,7 +6827,7 @@ fn test_update_add_htlc_bolt2_receiver_check_max_in_flight_msat() {
 	updates.update_add_htlcs[0].amount_msat = nodes[1].node.channel_state.lock().unwrap().by_id.get(&chan.2).unwrap().their_max_htlc_value_in_flight_msat + 1;
 	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
 
-	if let Err(HandleError{err, action: _}) = err {
+	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
 		assert_eq!(err,"Remote HTLC add would put them over their max HTLC value in flight");
 	} else {
 		assert!(false);
@@ -6846,8 +6839,6 @@ fn test_update_add_htlc_bolt2_receiver_check_max_in_flight_msat() {
 
 #[test]
 fn test_update_add_htlc_bolt2_receiver_check_cltv_expiry() {
-	use super::msgs::HandleError;
-
 	//BOLT2 Requirement: if sending node sets cltv_expiry to greater or equal to 500000000: SHOULD fail the channel.
 	let mut nodes = create_network(2);
 	let _chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 95000000);
@@ -6859,7 +6850,7 @@ fn test_update_add_htlc_bolt2_receiver_check_cltv_expiry() {
 	updates.update_add_htlcs[0].cltv_expiry = 500000000;
 	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
 
-	if let Err(HandleError{err, action: _}) = err {
+	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
 		assert_eq!(err,"Remote provided CLTV expiry in seconds instead of block height");
 	} else {
 		assert!(false);
