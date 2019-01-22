@@ -6863,15 +6863,16 @@ fn test_update_add_htlc_bolt2_receiver_check_cltv_expiry() {
 #[test]
 fn test_update_add_htlc_bolt2_receiver_check_repeated_id_ignore() {
 	//BOLT 2 requirement: if the sender did not previously acknowledge the commitment of that HTLC: MUST ignore a repeated id value after a reconnection.
+	// We test this by first testing that that repeated HTLCs pass commitment signature checks
+	// after disconnect and that non-sequential htlc_ids result in a channel failure.
 	let mut nodes = create_network(2);
-	let chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 95000000);
-	let route = nodes[0].router.get_route(&nodes[1].node.get_our_node_id(), None, &[], 3999999, TEST_FINAL_CLTV).unwrap();
+	create_announced_chan_between_nodes(&nodes, 0, 1);
+	let route = nodes[0].router.get_route(&nodes[1].node.get_our_node_id(), None, &[], 1000000, TEST_FINAL_CLTV).unwrap();
 	let (_, our_payment_hash) = get_payment_preimage_hash!(nodes[0]);
 	nodes[0].node.send_payment(route, our_payment_hash).unwrap();
 	check_added_monitors!(nodes[0], 1);
 	let updates = get_htlc_update_msgs!(nodes[0], nodes[1].node.get_our_node_id());
-	let _ = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
-	assert_eq!(nodes[1].node.channel_state.lock().unwrap().by_id.get(&chan.2).unwrap().next_remote_htlc_id, 1);
+	nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]).unwrap();
 
 	//Disconnect and Reconnect
 	nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id(), false);
@@ -6883,13 +6884,22 @@ fn test_update_add_htlc_bolt2_receiver_check_repeated_id_ignore() {
 	let reestablish_2 = get_chan_reestablish_msgs!(nodes[1], nodes[0]);
 	assert_eq!(reestablish_2.len(), 1);
 	nodes[0].node.handle_channel_reestablish(&nodes[1].node.get_our_node_id(), &reestablish_2[0]).unwrap();
-	let _ = handle_chan_reestablish_msgs!(nodes[0], nodes[1]);
+	handle_chan_reestablish_msgs!(nodes[0], nodes[1]);
 	nodes[1].node.handle_channel_reestablish(&nodes[0].node.get_our_node_id(), &reestablish_1[0]).unwrap();
-	let _ = handle_chan_reestablish_msgs!(nodes[1], nodes[0]);
+	handle_chan_reestablish_msgs!(nodes[1], nodes[0]);
 
 	//Resend HTLC
-	let _ = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
-	assert_eq!(nodes[1].node.channel_state.lock().unwrap().by_id.get(&chan.2).unwrap().next_remote_htlc_id, 1);
+	nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]).unwrap();
 	assert_eq!(updates.commitment_signed.htlc_signatures.len(), 1);
-}
+	nodes[1].node.handle_commitment_signed(&nodes[0].node.get_our_node_id(), &updates.commitment_signed).unwrap();
 
+	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
+	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
+		assert_eq!(err, "Remote skipped HTLC ID");
+	} else {
+		assert!(false);
+	}
+
+	assert!(nodes[1].node.list_channels().is_empty());
+	check_closed_broadcast!(nodes[1]);
+}
