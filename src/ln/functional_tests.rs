@@ -6631,7 +6631,6 @@ fn test_update_add_htlc_bolt2_sender_value_below_minimum_msat() {
 #[test]
 fn test_update_add_htlc_bolt2_sender_cltv_expiry_too_high() {
 	//BOLT 2 Requirement: MUST set cltv_expiry less than 500000000.
-	//TODO: This is not currently explicitly checked when sending an HTLC and exists as TODO in the channel::send_htlc(...) function
 	//It is enforced when constructing a route.
 	let mut nodes = create_network(2);
 	let _chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 0);
@@ -6709,6 +6708,8 @@ fn test_update_add_htlc_bolt2_sender_exceed_max_htlc_value_in_flight() {
 	} else {
 		assert!(false);
 	}
+
+	send_payment(&nodes[0], &[&nodes[1]], max_in_flight);
 }
 
 // BOLT 2 Requirements for the Receiver when handling an update_add_htlc message.
@@ -6824,7 +6825,7 @@ fn test_update_add_htlc_bolt2_receiver_check_max_in_flight_msat() {
 	nodes[0].node.send_payment(route, our_payment_hash).unwrap();
 	check_added_monitors!(nodes[0], 1);
 	let mut updates = get_htlc_update_msgs!(nodes[0], nodes[1].node.get_our_node_id());
-	updates.update_add_htlcs[0].amount_msat = nodes[1].node.channel_state.lock().unwrap().by_id.get(&chan.2).unwrap().their_max_htlc_value_in_flight_msat + 1;
+	updates.update_add_htlcs[0].amount_msat = get_channel_value_stat!(nodes[1], chan.2).their_max_htlc_value_in_flight_msat + 1;
 	let err = nodes[1].node.handle_update_add_htlc(&nodes[0].node.get_our_node_id(), &updates.update_add_htlcs[0]);
 
 	if let Err(msgs::HandleError{err, action: Some(msgs::ErrorAction::SendErrorMessage {..})}) = err {
@@ -6841,7 +6842,7 @@ fn test_update_add_htlc_bolt2_receiver_check_max_in_flight_msat() {
 fn test_update_add_htlc_bolt2_receiver_check_cltv_expiry() {
 	//BOLT2 Requirement: if sending node sets cltv_expiry to greater or equal to 500000000: SHOULD fail the channel.
 	let mut nodes = create_network(2);
-	let _chan = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 95000000);
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100000, 95000000);
 	let route = nodes[0].router.get_route(&nodes[1].node.get_our_node_id(), None, &[], 3999999, TEST_FINAL_CLTV).unwrap();
 	let (_, our_payment_hash) = get_payment_preimage_hash!(nodes[0]);
 	nodes[0].node.send_payment(route, our_payment_hash).unwrap();
