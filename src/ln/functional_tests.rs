@@ -21,6 +21,7 @@ use util::errors::APIError;
 use util::logger::Logger;
 use util::ser::{Writeable, Writer, ReadableArgs};
 use util::config::UserConfig;
+use util::rng;
 
 use bitcoin::util::hash::{BitcoinHash, Sha256dHash};
 use bitcoin::util::bip143;
@@ -6767,7 +6768,6 @@ fn test_update_add_htlc_bolt2_receiver_sender_can_afford_amount_sent() {
 
 #[test]
 fn test_update_add_htlc_bolt2_receiver_check_max_htlc_limit() {
-	use util::rng;
 	let secp_ctx = Secp256k1::new();
 
 	//BOLT 2 Requirement: if a sending node adds more than its max_accepted_htlcs HTLCs to its local commitment transaction: SHOULD fail the channel
