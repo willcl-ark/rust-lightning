@@ -361,7 +361,7 @@ pub const OUR_MAX_HTLCS: u16 = 50; //TODO
 /// Confirmation count threshold at which we close a channel. Ideally we'd keep the channel around
 /// on ice until the funding transaction gets more confirmations, but the LN protocol doesn't
 /// really allow for this, so instead we're stuck closing it out at that point.
-const UNCONF_THRESHOLD: u32 = 6;
+const UNCONF_THRESHOLD: u32 = 1;
 const SPENDING_INPUT_FOR_A_OUTPUT_WEIGHT: u64 = 79; // prevout: 36, nSequence: 4, script len: 1, witness lengths: (3+1)/4, sig: 73/4, if-selector: 1, redeemScript: (6 ops + 2*33 pubkeys + 1*2 delay)/4
 const B_OUTPUT_PLUS_SPENDING_INPUT_WEIGHT: u64 = 104; // prevout: 40, nSequence: 4, script len: 1, witness lengths: 3/4, sig: 73/4, pubkey: 33/4, output: 31 (TODO: Wrong? Useless?)
 
@@ -536,7 +536,7 @@ impl<ChanSigner: ChannelKeys> Channel<ChanSigner> {
 		if (feerate_per_kw as u64) < fee_estimator.get_est_sat_per_1000_weight(ConfirmationTarget::Background) {
 			return Err(ChannelError::Close("Peer's feerate much too low"));
 		}
-		if (feerate_per_kw as u64) > fee_estimator.get_est_sat_per_1000_weight(ConfirmationTarget::HighPriority) * 2 {
+		if (feerate_per_kw as u64) > fee_estimator.get_est_sat_per_1000_weight(ConfirmationTarget::HighPriority) * 200 {
 			return Err(ChannelError::Close("Peer's feerate much too high"));
 		}
 		Ok(())
@@ -1677,6 +1677,7 @@ debug_assert!(false, "This should be triggerable, and we should add a test case 
 					None => {},
 					Some(payment_hash) =>
 						if payment_hash != htlc.payment_hash {
+							println!("FAIL: {:?}, {:?}", htlc.payment_hash, payment_hash);
 							return Err(ChannelError::Close("Remote tried to fulfill HTLC with an incorrect preimage"));
 						}
 				};
