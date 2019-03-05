@@ -1632,6 +1632,7 @@ impl<ChanSigner: ChannelKeys> Channel<ChanSigner> {
 		let mut removed_outbound_total_msat = 0;
 		for ref htlc in self.pending_outbound_htlcs.iter() {
 			if let OutboundHTLCState::AwaitingRemoteRevokeToRemove(None) = htlc.state {
+debug_assert!(false, "This should be triggerable, and we should add a test case that does so!");
 				removed_outbound_total_msat += htlc.amount_msat;
 			} else if let OutboundHTLCState::AwaitingRemovedRemoteRevoke(None) = htlc.state {
 				removed_outbound_total_msat += htlc.amount_msat;
