@@ -501,7 +501,28 @@ pub fn do_test(data: &[u8]) {
 					bc_events.clear();
 					new_events
 				} else { Vec::new() };
-				for event in events.iter().chain(nodes[$node].get_and_clear_pending_msg_events().iter()) {
+				let ev = nodes[$node].get_and_clear_pending_msg_events();
+				for event in events.iter().chain(ev.iter()) {
+					match event {
+						events::MessageSendEvent::UpdateHTLCs { updates: CommitmentUpdate { ref update_add_htlcs, ref update_fail_htlcs, ref update_fulfill_htlcs, ref update_fail_malformed_htlcs, .. }, .. } => {
+							println!("UPDATEHTLCs {} {} {} {}", update_add_htlcs.len(), update_fail_htlcs.len(), update_fulfill_htlcs.len(), update_fail_malformed_htlcs.len());
+						},
+						events::MessageSendEvent::SendRevokeAndACK { .. } => {
+							println!("RAA");
+						},
+						events::MessageSendEvent::SendChannelReestablish { .. } => {
+							println!("Chan REE");
+						},
+						events::MessageSendEvent::SendFundingLocked { .. } => {
+							println!("FL");
+						},
+						events::MessageSendEvent::PaymentFailureNetworkUpdate { .. } => {
+							println!("Fail net update");
+						},
+						_ => panic!("Unhandled message event"),
+					}
+				}
+				for event in events.iter().chain(ev.iter()) {
 					match event {
 						events::MessageSendEvent::UpdateHTLCs { ref node_id, updates: CommitmentUpdate { ref update_add_htlcs, ref update_fail_htlcs, ref update_fulfill_htlcs, ref update_fail_malformed_htlcs, ref update_fee, ref commitment_signed } } => {
 							for dest in nodes.iter() {
@@ -663,7 +684,9 @@ pub fn do_test(data: &[u8]) {
 			} }
 		}
 
-		match get_slice!(1)[0] {
+        let a = get_slice!(1)[0];
+        println!("PROCESSING {:x}", a);
+		match a {
 			0x00 => *monitor_a.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::TemporaryFailure),
 			0x01 => *monitor_b.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::TemporaryFailure),
 			0x02 => *monitor_c.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::TemporaryFailure),
