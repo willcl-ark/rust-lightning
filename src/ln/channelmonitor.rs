@@ -487,7 +487,7 @@ impl ChannelMonitor {
 	}
 
 	fn get_witnesses_weight(inputs: &Vec<InputDescriptors>) -> u64 {
-		let mut tx_weight = 0;
+		let mut tx_weight = 2;
 		for inp in inputs {
 			// We use expected weight (and not actual) as signatures and time lock delays may vary
 			tx_weight +=  match inp {
