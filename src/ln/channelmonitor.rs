@@ -1214,6 +1214,11 @@ impl ChannelMonitor {
 							let sighash_parts = bip143::SighashComponents::new(&single_htlc_tx);
 							sign_input!(sighash_parts, single_htlc_tx.input[0], Some(idx), htlc.amount_msat / 1000);
 							assert!(predicted_weight >= single_htlc_tx.get_weight());
+
+							spendable_outputs.push(SpendableOutputDescriptor::StaticOutput {
+								outpoint: BitcoinOutPoint { txid: single_htlc_tx.txid(), vout: 0 },
+								output: single_htlc_tx.output[0].clone(),
+							});
 							txn_to_broadcast.push(single_htlc_tx);
 						}
 					}
