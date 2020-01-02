@@ -116,8 +116,8 @@ struct Peer {
 
 	sync_status: InitSyncTracker,
 
- 	awaiting_pong: bool,
-}	
+	awaiting_pong: bool,
+}
 
 impl Peer {
 	/// Returns true if the channel announcements/updates for the given channel should be
@@ -685,9 +685,9 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 													encode_and_send_msg!(resp, 19);
 												}
 											},
-											19 => {	
+											19 => {
 												peer.awaiting_pong = false;
-											 	try_potential_decodeerror!(msgs::Pong::read(&mut reader)); 
+												try_potential_decodeerror!(msgs::Pong::read(&mut reader));
 											},
 											// Channel control:
 											32 => {
@@ -1100,35 +1100,43 @@ impl<Descriptor: SocketDescriptor> PeerManager<Descriptor> {
 	/// prepare to Ping all the Peers that the PeerManager is responsible for and set awaiting_pong to true
 	///
 	/// After calling this function one would want to call process_events() in order to finish Pinging the Peer
-	/// then assuming a pong Message is sent by the corresponding Peer one would 
-	/// call do_read_event() in order to reset awaiting_pong 
+	/// then assuming a pong Message is sent by the corresponding Peer one would
+	/// call do_read_event() in order to reset awaiting_pong
 	pub fn timer_tick_occured(&self) {
 		let mut peers_lock = self.peers.lock().unwrap();
-		let peers = peers_lock.borrow_parts();
+		{
+			let peers = peers_lock.borrow_parts();
+			let peers_needing_send = peers.peers_needing_send;
+			let node_id_to_descriptor = peers.node_id_to_descriptor;
+			let peers = peers.peers;
 
-		for (descriptor, peer) in peers.peers.iter_mut() {
-			if peer.awaiting_pong == true {
-				peers.peers_needing_send.remove(descriptor);
-				match peer.their_node_id {
+			peers.retain(|descriptor, peer| {
+				if peer.awaiting_pong == true {
+					peers_needing_send.remove(descriptor);
+					match peer.their_node_id {
 						Some(node_id) => {
-							peers.node_id_to_descriptor.remove(&node_id);
+							node_id_to_descriptor.remove(&node_id);
 							self.message_handler.chan_handler.peer_disconnected(&node_id, true);
 						},
 						None => {}
+					}
 				}
-			}
-		}
-		peers.peers.retain(|_descriptor, peer| !peer.awaiting_pong);
 
-		for (descriptor, mut peer) in peers.peers.iter_mut() {
-			let ping = msgs::Ping {
- 				ponglen: 0,
- 				byteslen: 64,
- 			};
-			peer.pending_outbound_buffer.push_back(encode_msg!(ping, 18));
-			let mut descriptor_clone = descriptor.clone();
-			self.do_attempt_write_data(&mut descriptor_clone, &mut peer);
-  			peer.awaiting_pong = true;
+				let ping = msgs::Ping {
+					ponglen: 0,
+					byteslen: 64,
+				};
+				peer.pending_outbound_buffer.push_back(encode_msg!(ping, 18));
+				let mut descriptor_clone = descriptor.clone();
+				self.do_attempt_write_data(&mut descriptor_clone, peer);
+
+				if peer.awaiting_pong {
+					false // Drop the peer
+				} else {
+					peer.awaiting_pong = true;
+					true
+				}
+			});
 		}
 	}
 }
