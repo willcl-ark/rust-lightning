@@ -4,7 +4,7 @@
 //! here. See also the chanmon_fail_consistency fuzz test.
 
 use chain::transaction::OutPoint;
-use ln::channelmanager::{RAACommitmentOrder, PaymentPreimage, PaymentHash};
+use ln::channelmanager::{RAACommitmentOrder, PaymentPreimage, PaymentHash, PaymentSendFailure};
 use ln::channelmonitor::ChannelMonitorUpdateErr;
 use ln::features::InitFeatures;
 use ln::msgs;
@@ -29,7 +29,7 @@ fn test_simple_monitor_permanent_update_fail() {
 	let (_, payment_hash_1) = get_payment_preimage_hash!(&nodes[0]);
 
 	*nodes[0].chan_monitor.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::PermanentFailure);
-	if let Err(APIError::ChannelUnavailable {..}) = nodes[0].node.send_payment(route, payment_hash_1, None) {} else { panic!(); }
+	unwrap_send_err!(nodes[0].node.send_payment(route, payment_hash_1, None), true, APIError::ChannelUnavailable {..}, {});
 	check_added_monitors!(nodes[0], 1);
 
 	let events_1 = nodes[0].node.get_and_clear_pending_msg_events();
@@ -61,7 +61,8 @@ fn do_test_simple_monitor_temporary_update_fail(disconnect: bool) {
 	let (payment_preimage_1, payment_hash_1) = get_payment_preimage_hash!(&nodes[0]);
 
 	*nodes[0].chan_monitor.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::TemporaryFailure);
-	if let Err(APIError::MonitorUpdateFailed) = nodes[0].node.send_payment(route.clone(), payment_hash_1, None) {} else { panic!(); }
+
+	unwrap_send_err!(nodes[0].node.send_payment(route.clone(), payment_hash_1, None), false, APIError::MonitorUpdateFailed, {});
 	check_added_monitors!(nodes[0], 1);
 
 	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
@@ -104,7 +105,7 @@ fn do_test_simple_monitor_temporary_update_fail(disconnect: bool) {
 	// Now set it to failed again...
 	let (_, payment_hash_2) = get_payment_preimage_hash!(&nodes[0]);
 	*nodes[0].chan_monitor.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::TemporaryFailure);
-	if let Err(APIError::MonitorUpdateFailed) = nodes[0].node.send_payment(route, payment_hash_2, None) {} else { panic!(); }
+	unwrap_send_err!(nodes[0].node.send_payment(route, payment_hash_2, None), false, APIError::MonitorUpdateFailed, {});
 	check_added_monitors!(nodes[0], 1);
 
 	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
@@ -166,7 +167,7 @@ fn do_test_monitor_temporary_update_fail(disconnect_count: usize) {
 	let (payment_preimage_2, payment_hash_2) = get_payment_preimage_hash!(nodes[0]);
 
 	*nodes[0].chan_monitor.update_ret.lock().unwrap() = Err(ChannelMonitorUpdateErr::TemporaryFailure);
-	if let Err(APIError::MonitorUpdateFailed) = nodes[0].node.send_payment(route.clone(), payment_hash_2, None) {} else { panic!(); }
+	unwrap_send_err!(nodes[0].node.send_payment(route.clone(), payment_hash_2, None), false, APIError::MonitorUpdateFailed, {});
 	check_added_monitors!(nodes[0], 1);
 
 	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
