@@ -1,3 +1,4 @@
+use ln::chan_utils;
 use ln::chan_utils::{HTLCOutputInCommitment, TxCreationKeys};
 use ln::msgs;
 use chain::keysinterface::{ChannelKeys, InMemoryChannelKeys};
@@ -39,7 +40,8 @@ impl ChannelKeys for EnforcingChannelKeys {
 		if commitment_tx.input.len() != 1 { panic!(); }
 		if commitment_tx.output.len() != redeem_scripts.len() { panic!(); }
 
-		for (out, redeem_script) in commitment_tx.output.iter().zip(redeem_scripts.iter()) {
+		let mut found_to_remote = false;
+		for (idx, (out, redeem_script)) in commitment_tx.output.iter().zip(redeem_scripts.iter()).enumerate() {
 			if out.script_pubkey.is_v0_p2wpkh() {
 				if !redeem_script.is_empty() {
 					return Err(())
@@ -48,8 +50,24 @@ impl ChannelKeys for EnforcingChannelKeys {
 				if out.script_pubkey != redeem_script.to_v0_p2wsh() {
 					return Err(())
 				}
+				if !htlcs.iter().any(|h| h.transaction_output_index == Some(idx as u32)) {
+					assert!(!found_to_remote);
+					found_to_remote = true;
+					assert_eq!(*redeem_script,
+						chan_utils::get_revokeable_redeemscript(&keys.revocation_key, to_self_delay, &keys.a_delayed_payment_key));
+				}
 			}
 		}
+
+		for ref htlc in htlcs {
+			if let Some(o_idx) = htlc.transaction_output_index {
+				let htlc_redeemscript = chan_utils::get_htlc_redeemscript(&htlc, &keys);
+				assert!(redeem_scripts.len() > o_idx as usize);
+				assert_eq!(htlc_redeemscript, redeem_scripts[o_idx as usize]);
+			}
+		}
+
+		assert_eq!(*remote_per_commitment_point, keys.per_commitment_point);
 
 		let obscured_commitment_transaction_number = (commitment_tx.lock_time & 0xffffff) as u64 | ((commitment_tx.input[0].sequence as u64 & 0xffffff) << 3*8);
 
