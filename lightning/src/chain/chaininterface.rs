@@ -14,7 +14,7 @@ use bitcoin::network::constants::Network;
 
 use util::logger::Logger;
 
-use std::sync::{Mutex,Weak,MutexGuard,Arc};
+use std::sync::{Mutex, MutexGuard, Arc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashSet;
 
@@ -207,25 +207,33 @@ impl ChainWatchedUtil {
 
 /// Utility for notifying listeners about new blocks, and handling block rescans if new watch
 /// data is registered.
-pub struct BlockNotifier {
-	listeners: Mutex<Vec<Weak<ChainListener>>>, //TODO(vmw): try removing Weak
+pub struct BlockNotifier<'a> {
+	ref_listeners: Mutex<Vec<&'a ChainListener>>,
+	arc_listeners: Mutex<Vec<Arc<ChainListener>>>,
 	chain_monitor: Arc<ChainWatchInterface>,
 }
 
-impl BlockNotifier {
+impl<'a> BlockNotifier<'a> {
 	/// Constructs a new BlockNotifier without any listeners.
-	pub fn new(chain_monitor: Arc<ChainWatchInterface>) -> BlockNotifier {
+	pub fn new(chain_monitor: Arc<ChainWatchInterface>) -> BlockNotifier<'a> {
 		BlockNotifier {
-			listeners: Mutex::new(Vec::new()),
+			ref_listeners: Mutex::new(Vec::new()),
+			arc_listeners: Mutex::new(Vec::new()),
 			chain_monitor,
 		}
 	}
 
-	/// Register the given listener to receive events. Only a weak pointer is provided and
-	/// the registration should be freed once that pointer expires.
+	/// Register the given ref listener to receive events.
 	// TODO: unregister
-	pub fn register_listener(&self, listener: Weak<ChainListener>) {
-		let mut vec = self.listeners.lock().unwrap();
+	pub fn register_ref_listener(&self, listener: &'a ChainListener) {
+		let mut vec = self.ref_listeners.lock().unwrap();
+		vec.push(listener);
+	}
+
+	/// Register the given Arc listener to receive events.
+	// TODO: unregister
+	pub fn register_arc_listener(&self, listener: Arc<ChainListener>) {
+		let mut vec = self.arc_listeners.lock().unwrap();
 		vec.push(listener);
 	}
 
@@ -250,12 +258,14 @@ impl BlockNotifier {
 	pub fn block_connected_checked(&self, header: &BlockHeader, height: u32, txn_matched: &[&Transaction], indexes_of_txn_matched: &[u32]) -> bool {
 		let last_seen = self.chain_monitor.reentered();
 
-		let listeners = self.listeners.lock().unwrap().clone();
-		for listener in listeners.iter() {
-			match listener.upgrade() {
-				Some(arc) => arc.block_connected(header, height, txn_matched, indexes_of_txn_matched),
-				None => ()
-			}
+		let ref_listeners = self.ref_listeners.lock().unwrap().clone();
+		for ref_listener in ref_listeners.iter() {
+			ref_listener.block_connected(header, height, txn_matched, indexes_of_txn_matched);
+		}
+
+		let arc_listeners = self.arc_listeners.lock().unwrap().clone();
+		for arc_listener in arc_listeners.iter() {
+			arc_listener.block_connected(header, height, txn_matched, indexes_of_txn_matched);
 		}
 		return last_seen != self.chain_monitor.reentered();
 	}
@@ -263,12 +273,14 @@ impl BlockNotifier {
 
 	/// Notify listeners that a block was disconnected.
 	pub fn block_disconnected(&self, header: &BlockHeader, disconnected_height: u32) {
-		let listeners = self.listeners.lock().unwrap().clone();
-		for listener in listeners.iter() {
-			match listener.upgrade() {
-				Some(arc) => arc.block_disconnected(&header, disconnected_height),
-				None => ()
-			}
+		let ref_listeners = self.ref_listeners.lock().unwrap().clone();
+		for listener in ref_listeners.iter() {
+			listener.block_disconnected(&header, disconnected_height);
+		}
+
+		let arc_listeners = self.arc_listeners.lock().unwrap().clone();
+		for listener in arc_listeners.iter() {
+			listener.block_disconnected(&header, disconnected_height);
 		}
 	}
 
