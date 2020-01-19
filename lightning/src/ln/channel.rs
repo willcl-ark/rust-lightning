@@ -2320,6 +2320,7 @@ impl<ChanSigner: ChannelKeys> Channel<ChanSigner> {
 		}
 	}
 
+	#[cfg_attr(all(test, feature = "mutation_testing"), mutate)]
 	/// Removes any uncommitted HTLCs, to be used on peer disconnection, including any pending
 	/// HTLCs that we intended to add but haven't as we were waiting on a remote revoke.
 	/// Returns the set of PendingHTLCStatuses from remote uncommitted HTLCs (which we're
@@ -2406,6 +2407,7 @@ impl<ChanSigner: ChannelKeys> Channel<ChanSigner> {
 		self.channel_state |= ChannelState::MonitorUpdateFailed as u32;
 	}
 
+	#[cfg_attr(all(test, feature = "mutation_testing"), mutate)]
 	/// Indicates that the latest ChannelMonitor update has been committed by the client
 	/// successfully and we should restore normal operation. Returns messages which should be sent
 	/// to the remote side.
