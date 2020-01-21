@@ -117,9 +117,13 @@ pub struct HTLCUpdate {
 pub trait ManyChannelMonitor: Send + Sync {
 	/// Adds or updates a monitor for the given `funding_txo`.
 	///
-	/// Implementor must also ensure that the funding_txo outpoint is registered with any relevant
-	/// ChainWatchInterfaces such that the provided monitor receives block_connected callbacks with
-	/// any spends of it.
+	/// Implementer must also ensure that the funding_txo txid *and* outpoint are registered with
+	/// any relevant ChainWatchInterfaces such that the provided monitor receives block_connected
+	/// callbacks with the funding transaction, or any spends of it.
+	///
+	/// Further, the implementer must also ensure that each output returned in
+	/// monitor.get_watch_outputs() is registered to ensure that the provided monitor learns about
+	/// any spends of any of the outputs.
 	fn add_update_monitor(&self, funding_txo: OutPoint, monitor: ChannelMonitor) -> Result<(), ChannelMonitorUpdateErr>;
 
 	/// Used by ChannelManager to get list of HTLC resolved onchain and which needed to be updated
@@ -257,6 +261,11 @@ impl<Key : Send + cmp::Eq + hash::Hash + 'static> SimpleManyChannelMonitor<Key> 
 			},
 			Storage::Watchtower { .. } => {
 				self.chain_monitor.watch_all_txn();
+			}
+		}
+		for (txid, outputs) in monitor.get_watch_outputs().iter() {
+			for (idx, script) in outputs.iter().enumerate() {
+				self.chain_monitor.install_watch_outpoint((*txid, idx as u32), script);
 			}
 		}
 		monitors.insert(key, monitor);
@@ -642,6 +651,12 @@ pub struct ChannelMonitor {
 	// actions when we receive a block with given height. Actions depend on OnchainEvent type.
 	onchain_events_waiting_threshold_conf: HashMap<u32, Vec<OnchainEvent>>,
 
+	// If we get serialized out and re-read, we need to make sure that the chain monitoring
+	// interface knows about the TXOs that we want to be notified of spends of. We could probably
+	// be smart and derive them from the above storage fields, but its much simpler and more
+	// Obviously Correct (tm) if we just keep track of them explicitly.
+	watch_outputs: HashMap<Sha256dHash, Vec<Script>>,
+
 	// We simply modify last_block_hash in Channel's block_connected so that serialization is
 	// consistent but hopefully the users' copy handles block_connected in a consistent way.
 	// (we do *not*, however, update them in insert_combine to ensure any local user copies keep
@@ -712,7 +727,8 @@ impl PartialEq for ChannelMonitor {
 			self.to_remote_rescue != other.to_remote_rescue ||
 			self.pending_claim_requests != other.pending_claim_requests ||
 			self.claimable_outpoints != other.claimable_outpoints ||
-			self.onchain_events_waiting_threshold_conf != other.onchain_events_waiting_threshold_conf
+			self.onchain_events_waiting_threshold_conf != other.onchain_events_waiting_threshold_conf ||
+			self.watch_outputs != other.watch_outputs
 		{
 			false
 		} else {
@@ -769,6 +785,7 @@ impl ChannelMonitor {
 			claimable_outpoints: HashMap::new(),
 
 			onchain_events_waiting_threshold_conf: HashMap::new(),
+			watch_outputs: HashMap::new(),
 
 			last_block_hash: Default::default(),
 			secp_ctx: Secp256k1::new(),
@@ -1103,6 +1120,12 @@ impl ChannelMonitor {
 		}
 	}
 
+	/// Gets a list of txids, with their output scripts (in the order they appear in the
+	/// transaction), which we must learn about spends of via block_connected().
+	pub fn get_watch_outputs(&self) -> &HashMap<Sha256dHash, Vec<Script>> {
+		&self.watch_outputs
+	}
+
 	/// Gets the sets of all outpoints which this ChannelMonitor expects to hear about spends of.
 	/// Generally useful when deserializing as during normal operation the return values of
 	/// block_connected are sufficient to ensure all relevant outpoints are being monitored (note
@@ -1328,6 +1351,15 @@ impl ChannelMonitor {
 						input_material.write(writer)?;
 					}
 				}
+			}
+		}
+
+		(self.watch_outputs.len() as u64).write(writer)?;
+		for (txid, output_scripts) in self.watch_outputs.iter() {
+			txid.write(writer)?;
+			(output_scripts.len() as u64).write(writer)?;
+			for script in output_scripts.iter() {
+				script.write(writer)?;
 			}
 		}
 
@@ -2561,6 +2593,9 @@ impl ChannelMonitor {
 			}
 		}
 		self.last_block_hash = block_hash.clone();
+		for &(ref txid, ref output_scripts) in watch_outputs.iter() {
+			self.watch_outputs.insert(txid.clone(), output_scripts.iter().map(|o| o.script_pubkey.clone()).collect());
+		}
 		(watch_outputs, spendable_outputs, htlc_updated)
 	}
 
@@ -3212,6 +3247,20 @@ impl<R: ::std::io::Read> ReadableArgs<R, Arc<Logger>> for (Sha256dHash, ChannelM
 			onchain_events_waiting_threshold_conf.insert(height_target, events);
 		}
 
+		let watch_outputs_len: u64 = Readable::read(reader)?;
+		let mut watch_outputs = HashMap::with_capacity(cmp::min(watch_outputs_len as usize, MAX_ALLOC_SIZE / (32 + 3*8)));
+		for _ in 0..watch_outputs_len {
+			let txid = Readable::read(reader)?;
+			let outputs_len: u64 = Readable::read(reader)?;
+			let mut outputs = Vec::with_capacity(cmp::min(outputs_len as usize, MAX_ALLOC_SIZE / 3*8));
+			for _ in 0..outputs_len {
+				outputs.push(Readable::read(reader)?);
+			}
+			if let Some(_) = watch_outputs.insert(txid, outputs) {
+				return Err(DecodeError::InvalidValue);
+			}
+		}
+
 		Ok((last_block_hash.clone(), ChannelMonitor {
 			commitment_transaction_number_obscure_factor,
 
@@ -3244,6 +3293,7 @@ impl<R: ::std::io::Read> ReadableArgs<R, Arc<Logger>> for (Sha256dHash, ChannelM
 			claimable_outpoints,
 
 			onchain_events_waiting_threshold_conf,
+			watch_outputs,
 
 			last_block_hash,
 			secp_ctx,
