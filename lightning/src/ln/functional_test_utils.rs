@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex};
 use std::mem;
 
 pub const CHAN_CONFIRM_DEPTH: u32 = 100;
-pub fn confirm_transaction<'a, 'b>(notifier: &'a chaininterface::BlockNotifier<'b>, chain: &chaininterface::ChainWatchInterfaceUtil, tx: &Transaction, chan_id: u32) {
+pub fn confirm_transaction<'a, 'b: 'a>(notifier: &'a chaininterface::BlockNotifier<'b, &'b chaininterface::ChainListener>, chain: &chaininterface::ChainWatchInterfaceUtil, tx: &Transaction, chan_id: u32) {
 	assert!(chain.does_match_tx(tx));
 	let mut header = BlockHeader { version: 0x20000000, prev_blockhash: Default::default(), merkle_root: Default::default(), time: 42, bits: 42, nonce: 42 };
 	notifier.block_connected_checked(&header, 1, &[tx; 1], &[chan_id; 1]);
@@ -47,7 +47,7 @@ pub fn confirm_transaction<'a, 'b>(notifier: &'a chaininterface::BlockNotifier<'
 	}
 }
 
-pub fn connect_blocks<'a, 'b>(notifier: &'a chaininterface::BlockNotifier<'b>, depth: u32, height: u32, parent: bool, prev_blockhash: Sha256d) -> Sha256d {
+pub fn connect_blocks<'a, 'b>(notifier: &'a chaininterface::BlockNotifier<'b, &'b chaininterface::ChainListener>, depth: u32, height: u32, parent: bool, prev_blockhash: Sha256d) -> Sha256d {
 	let mut header = BlockHeader { version: 0x2000000, prev_blockhash: if parent { prev_blockhash } else { Default::default() }, merkle_root: Default::default(), time: 42, bits: 42, nonce: 42 };
 	notifier.block_connected_checked(&header, height + 1, &Vec::new(), &Vec::new());
 	for i in 2..depth + 1 {
@@ -68,7 +68,7 @@ pub struct NodeCfg {
 }
 
 pub struct Node<'a, 'b: 'a> {
-	pub block_notifier: chaininterface::BlockNotifier<'b>,
+	pub block_notifier: chaininterface::BlockNotifier<'b, &'b chaininterface::ChainListener>,
 	pub chain_monitor: Arc<chaininterface::ChainWatchInterfaceUtil>,
 	pub tx_broadcaster: Arc<test_utils::TestBroadcaster>,
 	pub chan_monitor: &'b test_utils::TestChannelMonitor,
@@ -889,8 +889,8 @@ pub fn create_network<'a, 'b>(node_count: usize, cfgs: &'a Vec<NodeCfg>, chan_mg
 
 	for i in 0..node_count {
 		let block_notifier = chaininterface::BlockNotifier::new(cfgs[i].chain_monitor.clone());
-		block_notifier.register_ref_listener(&cfgs[i].chan_monitor.simple_monitor);
-		block_notifier.register_ref_listener(&chan_mgrs[i]);
+		block_notifier.register_listener(&cfgs[i].chan_monitor.simple_monitor as &chaininterface::ChainListener);
+		block_notifier.register_listener(&chan_mgrs[i] as &chaininterface::ChainListener);
 		let router = Router::new(PublicKey::from_secret_key(&secp_ctx, &cfgs[i].keys_manager.get_node_secret()), cfgs[i].chain_monitor.clone(), cfgs[i].logger.clone() as Arc<Logger>);
 		nodes.push(Node{ chain_monitor: cfgs[i].chain_monitor.clone(), block_notifier,
 										 tx_broadcaster: cfgs[i].tx_broadcaster.clone(), chan_monitor: &cfgs[i].chan_monitor,

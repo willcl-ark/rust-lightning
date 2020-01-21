@@ -207,33 +207,26 @@ impl ChainWatchedUtil {
 
 /// Utility for notifying listeners about new blocks, and handling block rescans if new watch
 /// data is registered.
-pub struct BlockNotifier<'a> {
-	ref_listeners: Mutex<Vec<&'a ChainListener>>,
-	arc_listeners: Mutex<Vec<Arc<ChainListener>>>,
+pub struct BlockNotifier<'a, CL: std::ops::Deref<Target = ChainListener + 'a> + 'a> {
+	listeners: Mutex<Vec<CL>>,
 	chain_monitor: Arc<ChainWatchInterface>,
+	phantom: ::std::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> BlockNotifier<'a> {
+impl<'a, CL: ::std::ops::Deref<Target = ChainListener + 'a> + 'a> BlockNotifier<'a, CL> {
 	/// Constructs a new BlockNotifier without any listeners.
-	pub fn new(chain_monitor: Arc<ChainWatchInterface>) -> BlockNotifier<'a> {
+	pub fn new(chain_monitor: Arc<ChainWatchInterface>) -> BlockNotifier<'a, CL> {
 		BlockNotifier {
-			ref_listeners: Mutex::new(Vec::new()),
-			arc_listeners: Mutex::new(Vec::new()),
+			listeners: Mutex::new(Vec::new()),
 			chain_monitor,
+			phantom: ::std::marker::PhantomData,
 		}
 	}
 
 	/// Register the given ref listener to receive events.
 	// TODO: unregister
-	pub fn register_ref_listener(&self, listener: &'a ChainListener) {
-		let mut vec = self.ref_listeners.lock().unwrap();
-		vec.push(listener);
-	}
-
-	/// Register the given Arc listener to receive events.
-	// TODO: unregister
-	pub fn register_arc_listener(&self, listener: Arc<ChainListener>) {
-		let mut vec = self.arc_listeners.lock().unwrap();
+	pub fn register_listener(&self, listener: CL) {
+		let mut vec = self.listeners.lock().unwrap();
 		vec.push(listener);
 	}
 
@@ -258,14 +251,9 @@ impl<'a> BlockNotifier<'a> {
 	pub fn block_connected_checked(&self, header: &BlockHeader, height: u32, txn_matched: &[&Transaction], indexes_of_txn_matched: &[u32]) -> bool {
 		let last_seen = self.chain_monitor.reentered();
 
-		let ref_listeners = self.ref_listeners.lock().unwrap().clone();
-		for ref_listener in ref_listeners.iter() {
-			ref_listener.block_connected(header, height, txn_matched, indexes_of_txn_matched);
-		}
-
-		let arc_listeners = self.arc_listeners.lock().unwrap().clone();
-		for arc_listener in arc_listeners.iter() {
-			arc_listener.block_connected(header, height, txn_matched, indexes_of_txn_matched);
+		let listeners = self.listeners.lock().unwrap();
+		for listener in listeners.iter() {
+			listener.block_connected(header, height, txn_matched, indexes_of_txn_matched);
 		}
 		return last_seen != self.chain_monitor.reentered();
 	}
@@ -273,13 +261,8 @@ impl<'a> BlockNotifier<'a> {
 
 	/// Notify listeners that a block was disconnected.
 	pub fn block_disconnected(&self, header: &BlockHeader, disconnected_height: u32) {
-		let ref_listeners = self.ref_listeners.lock().unwrap().clone();
-		for listener in ref_listeners.iter() {
-			listener.block_disconnected(&header, disconnected_height);
-		}
-
-		let arc_listeners = self.arc_listeners.lock().unwrap().clone();
-		for listener in arc_listeners.iter() {
+		let listeners = self.listeners.lock().unwrap();
+		for listener in listeners.iter() {
 			listener.block_disconnected(&header, disconnected_height);
 		}
 	}

@@ -3522,7 +3522,7 @@ fn test_no_txn_manager_serialize_deserialize() {
 
 	assert!(nodes[0].chan_monitor.add_update_monitor(chan_0_monitor.get_funding_txo().unwrap(), chan_0_monitor).is_ok());
 	nodes[0].node = &nodes_0_deserialized;
-	nodes[0].block_notifier.register_ref_listener(nodes[0].node);
+	nodes[0].block_notifier.register_listener(nodes[0].node);
 	assert_eq!(nodes[0].node.list_channels().len(), 1);
 	check_added_monitors!(nodes[0], 1);
 
@@ -6323,8 +6323,8 @@ fn test_data_loss_protect() {
 	nodes[0].chain_monitor = chain_monitor;
 
 	nodes[0].block_notifier = BlockNotifier::new(nodes[0].chain_monitor.clone());
-	nodes[0].block_notifier.register_ref_listener(&nodes[0].chan_monitor.simple_monitor);
-	nodes[0].block_notifier.register_ref_listener(nodes[0].node);
+	nodes[0].block_notifier.register_listener(&nodes[0].chan_monitor.simple_monitor);
+	nodes[0].block_notifier.register_listener(nodes[0].node);
 
 	check_added_monitors!(nodes[0], 1);
 
