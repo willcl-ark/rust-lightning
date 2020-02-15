@@ -1124,7 +1124,7 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 
 				let ping = msgs::Ping {
 					ponglen: 0,
-					byteslen: 64,
+					byteslen: 0,
 				};
 				peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encode_msg!(&ping)));
 
