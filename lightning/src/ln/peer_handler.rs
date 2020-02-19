@@ -1086,9 +1086,8 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 					}
 				}
 
-				// check if the peer is ready for encryption
+				// The peer needs to complete its handshake before we can exchange messages
 				if !peer.channel_encryptor.is_ready_for_encryption() {
-					// let's wait for the peer to complete the handshake
 					return true;
 				}
 
