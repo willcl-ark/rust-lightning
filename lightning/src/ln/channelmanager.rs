@@ -3221,8 +3221,8 @@ impl Writeable for PendingHTLCInfo {
 	}
 }
 
-impl<R: ::std::io::Read> Readable<R> for PendingHTLCInfo {
-	fn read(reader: &mut R) -> Result<PendingHTLCInfo, DecodeError> {
+impl Readable for PendingHTLCInfo {
+	fn read<R: ::std::io::Read>(reader: &mut R) -> Result<PendingHTLCInfo, DecodeError> {
 		Ok(PendingHTLCInfo {
 			type_data: match Readable::read(reader)? {
 				0u8 => PendingForwardReceiveHTLCInfo::Forward {
@@ -3259,9 +3259,9 @@ impl Writeable for HTLCFailureMsg {
 	}
 }
 
-impl<R: ::std::io::Read> Readable<R> for HTLCFailureMsg {
-	fn read(reader: &mut R) -> Result<HTLCFailureMsg, DecodeError> {
-		match <u8 as Readable<R>>::read(reader)? {
+impl Readable for HTLCFailureMsg {
+	fn read<R: ::std::io::Read>(reader: &mut R) -> Result<HTLCFailureMsg, DecodeError> {
+		match <u8 as Readable>::read(reader)? {
 			0 => Ok(HTLCFailureMsg::Relay(Readable::read(reader)?)),
 			1 => Ok(HTLCFailureMsg::Malformed(Readable::read(reader)?)),
 			_ => Err(DecodeError::InvalidValue),
@@ -3285,9 +3285,9 @@ impl Writeable for PendingHTLCStatus {
 	}
 }
 
-impl<R: ::std::io::Read> Readable<R> for PendingHTLCStatus {
-	fn read(reader: &mut R) -> Result<PendingHTLCStatus, DecodeError> {
-		match <u8 as Readable<R>>::read(reader)? {
+impl Readable for PendingHTLCStatus {
+	fn read<R: ::std::io::Read>(reader: &mut R) -> Result<PendingHTLCStatus, DecodeError> {
+		match <u8 as Readable>::read(reader)? {
 			0 => Ok(PendingHTLCStatus::Forward(Readable::read(reader)?)),
 			1 => Ok(PendingHTLCStatus::Fail(Readable::read(reader)?)),
 			_ => Err(DecodeError::InvalidValue),
@@ -3319,9 +3319,9 @@ impl Writeable for HTLCSource {
 	}
 }
 
-impl<R: ::std::io::Read> Readable<R> for HTLCSource {
-	fn read(reader: &mut R) -> Result<HTLCSource, DecodeError> {
-		match <u8 as Readable<R>>::read(reader)? {
+impl Readable for HTLCSource {
+	fn read<R: ::std::io::Read>(reader: &mut R) -> Result<HTLCSource, DecodeError> {
+		match <u8 as Readable>::read(reader)? {
 			0 => Ok(HTLCSource::PreviousHopData(Readable::read(reader)?)),
 			1 => Ok(HTLCSource::OutboundRoute {
 				path: Readable::read(reader)?,
@@ -3350,9 +3350,9 @@ impl Writeable for HTLCFailReason {
 	}
 }
 
-impl<R: ::std::io::Read> Readable<R> for HTLCFailReason {
-	fn read(reader: &mut R) -> Result<HTLCFailReason, DecodeError> {
-		match <u8 as Readable<R>>::read(reader)? {
+impl Readable for HTLCFailReason {
+	fn read<R: ::std::io::Read>(reader: &mut R) -> Result<HTLCFailReason, DecodeError> {
+		match <u8 as Readable>::read(reader)? {
 			0 => Ok(HTLCFailReason::LightningError { err: Readable::read(reader)? }),
 			1 => Ok(HTLCFailReason::Reason {
 				failure_code: Readable::read(reader)?,
@@ -3382,9 +3382,9 @@ impl Writeable for HTLCForwardInfo {
 	}
 }
 
-impl<R: ::std::io::Read> Readable<R> for HTLCForwardInfo {
-	fn read(reader: &mut R) -> Result<HTLCForwardInfo, DecodeError> {
-		match <u8 as Readable<R>>::read(reader)? {
+impl Readable for HTLCForwardInfo {
+	fn read<R: ::std::io::Read>(reader: &mut R) -> Result<HTLCForwardInfo, DecodeError> {
+		match <u8 as Readable>::read(reader)? {
 			0 => Ok(HTLCForwardInfo::AddHTLC {
 				prev_short_channel_id: Readable::read(reader)?,
 				prev_htlc_id: Readable::read(reader)?,
@@ -3516,15 +3516,15 @@ pub struct ChannelManagerReadArgs<'a, ChanSigner: 'a + ChannelKeys, M: Deref> wh
 
 // Implement ReadableArgs for an Arc'd ChannelManager to make it a bit easier to work with the
 // SipmleArcChannelManager type:
-impl<'a, R : ::std::io::Read, ChanSigner: ChannelKeys + Readable<R>, M: Deref> ReadableArgs<R, ChannelManagerReadArgs<'a, ChanSigner, M>> for (Sha256dHash, Arc<ChannelManager<ChanSigner, M>>) where M::Target: ManyChannelMonitor<ChanSigner> {
-	fn read(reader: &mut R, args: ChannelManagerReadArgs<'a, ChanSigner, M>) -> Result<Self, DecodeError> {
+impl<'a, ChanSigner: ChannelKeys + Readable, M: Deref> ReadableArgs<ChannelManagerReadArgs<'a, ChanSigner, M>> for (Sha256dHash, Arc<ChannelManager<ChanSigner, M>>) where M::Target: ManyChannelMonitor<ChanSigner> {
+	fn read<R: ::std::io::Read>(reader: &mut R, args: ChannelManagerReadArgs<'a, ChanSigner, M>) -> Result<Self, DecodeError> {
 		let (blockhash, chan_manager) = <(Sha256dHash, ChannelManager<ChanSigner, M>)>::read(reader, args)?;
 		Ok((blockhash, Arc::new(chan_manager)))
 	}
 }
 
-impl<'a, R : ::std::io::Read, ChanSigner: ChannelKeys + Readable<R>, M: Deref> ReadableArgs<R, ChannelManagerReadArgs<'a, ChanSigner, M>> for (Sha256dHash, ChannelManager<ChanSigner, M>) where M::Target: ManyChannelMonitor<ChanSigner> {
-	fn read(reader: &mut R, args: ChannelManagerReadArgs<'a, ChanSigner, M>) -> Result<Self, DecodeError> {
+impl<'a, ChanSigner: ChannelKeys + Readable, M: Deref> ReadableArgs<ChannelManagerReadArgs<'a, ChanSigner, M>> for (Sha256dHash, ChannelManager<ChanSigner, M>) where M::Target: ManyChannelMonitor<ChanSigner> {
+	fn read<R: ::std::io::Read>(reader: &mut R, args: ChannelManagerReadArgs<'a, ChanSigner, M>) -> Result<Self, DecodeError> {
 		let _ver: u8 = Readable::read(reader)?;
 		let min_ver: u8 = Readable::read(reader)?;
 		if min_ver > SERIALIZATION_VERSION {
