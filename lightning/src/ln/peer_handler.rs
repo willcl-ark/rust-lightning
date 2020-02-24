@@ -151,6 +151,12 @@ impl Peer {
 	}
 }
 
+enum AnnouncementMsg {
+	ChanUpdate(msgs::ChannelUpdate),
+	ChanAnnounce(msgs::ChannelAnnouncement),
+	NodeAnnounce(msgs::NodeAnnouncement),
+}
+
 struct PeerHolder<Descriptor: SocketDescriptor> {
 	peers: HashMap<Descriptor, Peer>,
 	/// Added to by do_read_event for cases where we pushed a message onto the send buffer but
@@ -158,6 +164,7 @@ struct PeerHolder<Descriptor: SocketDescriptor> {
 	peers_needing_send: HashSet<Descriptor>,
 	/// Only add to this set when noise completes:
 	node_id_to_descriptor: HashMap<PublicKey, Descriptor>,
+	pending_broadcasts: Vec<(PublicKey, AnnouncementMsg)>,
 }
 
 #[cfg(not(any(target_pointer_width = "32", target_pointer_width = "64")))]
@@ -226,7 +233,8 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 			peers: Mutex::new(PeerHolder {
 				peers: HashMap::new(),
 				peers_needing_send: HashSet::new(),
-				node_id_to_descriptor: HashMap::new()
+				node_id_to_descriptor: HashMap::new(),
+				pending_broadcasts: Vec::new(),
 			}),
 			our_node_secret: our_node_secret,
 			ephemeral_key_midstate,
@@ -748,21 +756,21 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 												let should_forward = try_potential_handleerror!(self.message_handler.route_handler.handle_channel_announcement(&msg));
 
 												if should_forward {
-													// TODO: forward msg along to all our other peers!
+													peers.pending_broadcasts.push((peer.their_node_id.unwrap().clone(), AnnouncementMsg::ChanAnnounce(msg)));
 												}
 											},
 											wire::Message::NodeAnnouncement(msg) => {
 												let should_forward = try_potential_handleerror!(self.message_handler.route_handler.handle_node_announcement(&msg));
 
 												if should_forward {
-													// TODO: forward msg along to all our other peers!
+													peers.pending_broadcasts.push((peer.their_node_id.unwrap().clone(), AnnouncementMsg::NodeAnnounce(msg)));
 												}
 											},
 											wire::Message::ChannelUpdate(msg) => {
 												let should_forward = try_potential_handleerror!(self.message_handler.route_handler.handle_channel_update(&msg));
 
 												if should_forward {
-													// TODO: forward msg along to all our other peers!
+													peers.pending_broadcasts.push((peer.their_node_id.unwrap().clone(), AnnouncementMsg::ChanUpdate(msg)));
 												}
 											},
 
@@ -803,6 +811,54 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 			let mut events_generated = self.message_handler.chan_handler.get_and_clear_pending_msg_events();
 			let mut peers_lock = self.peers.lock().unwrap();
 			let peers = &mut *peers_lock;
+
+			macro_rules! broadcast_msgs {
+				({ $($except_check: stmt), * }, { $($encoded_msg: expr), * }) => { {
+					for (ref descriptor, ref mut peer) in peers.peers.iter_mut() {
+						if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_features.is_none() {
+							continue
+						}
+						match peer.their_node_id {
+							None => continue,
+							Some(their_node_id) => {
+								$(
+									if { $except_check }(&peer, their_node_id) { continue }
+								)*
+							}
+						}
+						$(peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&$encoded_msg));)*
+						self.do_attempt_write_data(&mut (*descriptor).clone(), peer);
+					}
+				} }
+			}
+
+			for (from_node_id, broadcast) in peers.pending_broadcasts.drain(..) {
+				match broadcast {
+					AnnouncementMsg::ChanUpdate(msg) => {
+						let encoded_msg = encode_msg!(&msg);
+						broadcast_msgs!({ |peer: & &mut Peer, _| !peer.should_forward_channel(msg.contents.short_channel_id),
+										  |_, their_node_id| their_node_id == from_node_id },
+										{ encoded_msg });
+					},
+					AnnouncementMsg::ChanAnnounce(msg) => {
+						let encoded_msg = encode_msg!(&msg);
+						broadcast_msgs!({ |peer: & &mut Peer, _| !peer.should_forward_channel(msg.contents.short_channel_id),
+										  |_, their_node_id| their_node_id == msg.contents.node_id_1,
+										  |_, their_node_id| their_node_id == msg.contents.node_id_2,
+										  |_, their_node_id| their_node_id == from_node_id },
+										{ encoded_msg });
+					},
+					AnnouncementMsg::NodeAnnounce(msg) => {
+						let encoded_msg = encode_msg!(&msg);
+
+						broadcast_msgs!({ |peer: & &mut Peer, _| !peer.should_forward_node(msg.contents.node_id),
+										  |_, their_node_id| their_node_id == msg.contents.node_id,
+										  |_, their_node_id| their_node_id == from_node_id },
+										{ encoded_msg });
+					}
+				}
+			}
+
 			for event in events_generated.drain(..) {
 				macro_rules! get_peer_for_forwarding {
 					($node_id: expr, $handle_no_such_peer: block) => {
@@ -965,24 +1021,10 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 						if self.message_handler.route_handler.handle_channel_announcement(msg).is_ok() && self.message_handler.route_handler.handle_channel_update(update_msg).is_ok() {
 							let encoded_msg = encode_msg!(msg);
 							let encoded_update_msg = encode_msg!(update_msg);
-
-							for (ref descriptor, ref mut peer) in peers.peers.iter_mut() {
-								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_features.is_none() ||
-										!peer.should_forward_channel(msg.contents.short_channel_id) {
-									continue
-								}
-								match peer.their_node_id {
-									None => continue,
-									Some(their_node_id) => {
-										if their_node_id == msg.contents.node_id_1 || their_node_id == msg.contents.node_id_2 {
-											continue
-										}
-									}
-								}
-								peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encoded_msg[..]));
-								peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encoded_update_msg[..]));
-								self.do_attempt_write_data(&mut (*descriptor).clone(), peer);
-							}
+							broadcast_msgs!({ |peer: & &mut Peer, _| !peer.should_forward_channel(msg.contents.short_channel_id),
+											  |_, their_node_id| their_node_id == msg.contents.node_id_1,
+											  |_, their_node_id| their_node_id == msg.contents.node_id_2 },
+											{ encoded_msg, encoded_update_msg });
 						}
 					},
 					MessageSendEvent::BroadcastNodeAnnouncement { ref msg } => {
@@ -990,14 +1032,9 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 						if self.message_handler.route_handler.handle_node_announcement(msg).is_ok() {
 							let encoded_msg = encode_msg!(msg);
 
-							for (ref descriptor, ref mut peer) in peers.peers.iter_mut() {
-								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_features.is_none() ||
-										!peer.should_forward_node(msg.contents.node_id) {
-									continue
-								}
-								peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encoded_msg[..]));
-								self.do_attempt_write_data(&mut (*descriptor).clone(), peer);
-							}
+							broadcast_msgs!({ |peer: & &mut Peer, _| !peer.should_forward_node(msg.contents.node_id),
+											  |_, their_node_id| their_node_id == msg.contents.node_id },
+											{ encoded_msg });
 						}
 					},
 					MessageSendEvent::BroadcastChannelUpdate { ref msg } => {
@@ -1005,14 +1042,8 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 						if self.message_handler.route_handler.handle_channel_update(msg).is_ok() {
 							let encoded_msg = encode_msg!(msg);
 
-							for (ref descriptor, ref mut peer) in peers.peers.iter_mut() {
-								if !peer.channel_encryptor.is_ready_for_encryption() || peer.their_features.is_none() ||
-										!peer.should_forward_channel(msg.contents.short_channel_id)  {
-									continue
-								}
-								peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encoded_msg[..]));
-								self.do_attempt_write_data(&mut (*descriptor).clone(), peer);
-							}
+							broadcast_msgs!({ |peer: & &mut Peer, _| !peer.should_forward_channel(msg.contents.short_channel_id) },
+											{ encoded_msg });
 						}
 					},
 					MessageSendEvent::PaymentFailureNetworkUpdate { ref update } => {
