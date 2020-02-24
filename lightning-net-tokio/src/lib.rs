@@ -70,7 +70,7 @@ use lightning::ln::peer_handler;
 use lightning::ln::peer_handler::SocketDescriptor as LnSocketTrait;
 use lightning::ln::msgs::ChannelMessageHandler;
 
-use std::task;
+use std::{task, thread};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -102,6 +102,11 @@ struct Connection {
 	// send into any read_blocker to wake the reading future back up and set read_paused back to
 	// false.
 	read_blocker: Option<oneshot::Sender<()>>,
+	// When we are told by rust-lightning to disconnect, we can't return to rust-lightning until we
+	// are sure we won't call any more read/write PeerManager functions with the same connection.
+	// This is set to true if we're in such a condition (with disconnect checked before with the
+	// top-level mutex held) and false when we can return.
+	disconnect_block: bool,
 	read_paused: bool,
 	// If we get disconnected via SocketDescriptor::disconnect_socket(), we don't call
 	// disconnect_event(), but if we get an Err return value out of PeerManager, in general, we do.
@@ -123,6 +128,16 @@ impl Connection {
 				} }
 			}
 
+			macro_rules! prepare_read_write_call {
+				() => { {
+					let mut us_lock = us.lock().unwrap();
+					if us_lock.disconnect {
+						shutdown_socket!("disconnect_socket() call from RL");
+					}
+					us_lock.disconnect_block = true;
+				} }
+			}
+
 			// Whenever we want to block on reading or waiting for reading to resume, we have to
 			// at least select with the write_avail_receiver, which is used by the
 			// SocketDescriptor to wake us up if we need to shut down the socket or if we need
@@ -130,13 +145,12 @@ impl Connection {
 			macro_rules! select_write_ev {
 				($v: expr) => { {
 					assert!($v.is_some()); // We can't have dropped the sending end, its in the us Arc!
-					if us.lock().unwrap().disconnect {
-						shutdown_socket!("disconnect_socket() call from RL");
-					}
+					prepare_read_write_call!();
 					if let Err(e) = peer_manager.write_buffer_space_avail(&mut SocketDescriptor::new(us.clone())) {
 						us.lock().unwrap().need_disconnect_event = false;
 						shutdown_socket!(e);
 					}
+					us.lock().unwrap().disconnect_block = false;
 				} }
 			}
 
@@ -169,6 +183,7 @@ impl Connection {
 								v = write_avail_receiver.recv() => select_write_ev!(v),
 							}
 						}
+						prepare_read_write_call!();
 						match peer_manager.read_event(&mut SocketDescriptor::new(Arc::clone(&us)), &buf[0..len]) {
 							Ok(pause_read) => {
 								if pause_read {
@@ -190,6 +205,7 @@ impl Connection {
 								shutdown_socket!(e)
 							},
 						}
+						us.lock().unwrap().disconnect_block = false;
 					},
 					Err(e) => {
 						println!("Connection closed: {}", e);
@@ -198,6 +214,7 @@ impl Connection {
 				},
 			}
 		}
+		us.lock().unwrap().disconnect_block = false;
 		let writer_option = us.lock().unwrap().writer.take();
 		if let Some(mut writer) = writer_option {
 			// If the socket is already closed, shutdown() will fail, so just ignore it.
@@ -227,7 +244,7 @@ impl Connection {
 
 		(reader, receiver,
 		Arc::new(Mutex::new(Self {
-			writer: Some(writer), event_notify, write_avail,
+			writer: Some(writer), event_notify, write_avail, disconnect_block: false,
 			read_blocker: None, read_paused: false, need_disconnect_event: true, disconnect: false,
 			id: ID_COUNTER.fetch_add(1, Ordering::AcqRel)
 		})))
@@ -423,16 +440,19 @@ impl peer_handler::SocketDescriptor for SocketDescriptor {
 	}
 
 	fn disconnect_socket(&mut self) {
-		let mut us = self.conn.lock().unwrap();
-		us.need_disconnect_event = false;
-		us.disconnect = true;
-		us.read_paused = true;
-		// Wake up the sending thread, assuming it is still alive
-		let _ = us.write_avail.try_send(());
-		// TODO: There's a race where we don't meet the requirements of disconnect_socket if the
-		// read task is about to call a PeerManager function (eg read_event or write_event).
-		// Ideally we need to release the us lock and block until we have confirmation from the
-		// read task that it has broken out of its main loop.
+		{
+			let mut us = self.conn.lock().unwrap();
+			us.need_disconnect_event = false;
+			us.disconnect = true;
+			us.read_paused = true;
+			// Wake up the sending thread, assuming it is still alive
+			let _ = us.write_avail.try_send(());
+			// Happy-path return:
+			if !us.disconnect_block { return; }
+		}
+		while self.conn.lock().unwrap().disconnect_block {
+			thread::yield_now();
+		}
 	}
 }
 impl Clone for SocketDescriptor {
