@@ -3154,6 +3154,7 @@ impl<ChanSigner: ChannelKeys> Channel<ChanSigner> {
 		}
 		if header.bitcoin_hash() != self.last_block_connected {
 			self.last_block_connected = header.bitcoin_hash();
+			self.channel_update_count = cmp::max(self.channel_update_count, header.time);
 			if let Some(channel_monitor) = self.channel_monitor.as_mut() {
 				channel_monitor.last_block_hash = self.last_block_connected;
 			}

@@ -2742,6 +2742,16 @@ impl<ChanSigner: ChannelKeys, M: Deref + Sync + Send, T: Deref + Sync + Send> Ch
 		}
 		self.latest_block_height.store(height as usize, Ordering::Release);
 		*self.last_block_hash.try_lock().expect("block_(dis)connected must not be called in parallel") = header_hash;
+		loop {
+			// Just in case we end up in a race, we loop until we either successfully update
+			// last_node_announcement_serial or decide we don't need to.
+			let old_serial = self.last_node_announcement_serial.load(Ordering::Acquire);
+			if old_serial < header.time as usize {
+				if self.last_node_announcement_serial.compare_exchange(old_serial, header.time as usize, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+					break;
+				}
+			} else { break; }
+		}
 	}
 
 	/// We force-close the channel without letting our counterparty participate in the shutdown
