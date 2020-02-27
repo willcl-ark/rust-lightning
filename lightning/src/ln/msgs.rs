@@ -168,7 +168,7 @@ pub struct ClosingSigned {
 }
 
 /// An update_add_htlc message to be sent or received from a peer
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct UpdateAddHTLC {
 	pub(crate) channel_id: [u8; 32],
 	pub(crate) htlc_id: u64,
@@ -713,6 +713,12 @@ pub(crate) struct OnionPacket {
 	pub(crate) public_key: Result<PublicKey, secp256k1::Error>,
 	pub(crate) hop_data: [u8; 20*65],
 	pub(crate) hmac: [u8; 32],
+}
+
+impl std::fmt::Debug for OnionPacket {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "an onion was here")
+	}
 }
 
 impl PartialEq for OnionPacket {

@@ -960,6 +960,7 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 								//TODO: Do whatever we're gonna do for handling dropped messages
 							});
 						for msg in update_add_htlcs {
+							log_trace!(self, "mesh_debug: {:?}", msg);
 							peer.pending_outbound_buffer.push_back(peer.channel_encryptor.encrypt_message(&encode_msg!(msg)));
 						}
 						for msg in update_fulfill_htlcs {
