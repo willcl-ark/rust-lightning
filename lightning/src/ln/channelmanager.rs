@@ -905,6 +905,46 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 		}
 	}
 
+	fn decode_update_add_htlc_onion_mesh(&self, msg: &msgs::UpdateAddHTLC, their_pubkey: &PublicKey) -> (PendingHTLCStatus, MutexGuard<ChannelHolder<ChanSigner>>) {
+
+		// We need to convert from publicKey to point:
+
+		// Create the DH shared secret
+		let shared_secret = {
+			let mut arr = [0; 32];
+			arr.copy_from_slice(&SharedSecret::new(&their_pubkey, &self.our_network_key)[..]);
+			arr
+		};
+
+		// Init the channel_state as none
+		let mut channel_state = None;
+
+		// Hopefully we use legacy onions so this can just be None?
+		let payment_data = None;
+
+		// Hard-code this as an onion to us (::Receive)
+		// Also hard-code amount and cltv expiry
+		let pending_forward_info =
+
+			PendingHTLCStatus::Forward(PendingHTLCInfo {
+				type_data: PendingForwardReceiveHTLCInfo::Receive {
+					payment_data,
+					incoming_cltv_expiry: msg.cltv_expiry,
+				},
+				payment_hash: msg.payment_hash.clone(),
+				incoming_shared_secret: shared_secret,
+				amt_to_forward: msg.amount_msat - 1,
+				outgoing_cltv_value: msg.cltv_expiry - 6,
+			});
+
+		// Lock the mutex on the channel state
+		channel_state = Some(self.channel_state.lock().unwrap());
+
+		// Return the pending forward info and the mutex
+		(pending_forward_info, channel_state.unwrap())
+
+		}
+
 	fn decode_update_add_htlc_onion(&self, msg: &msgs::UpdateAddHTLC) -> (PendingHTLCStatus, MutexGuard<ChannelHolder<ChanSigner>>) {
 		macro_rules! return_malformed_err {
 			($msg: expr, $err_code: expr) => {
@@ -990,22 +1030,6 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 		};
 
 		let pending_forward_info = if next_hop_hmac == [0; 32] {
-				#[cfg(test)]
-				{
-					// In tests, make sure that the initial onion pcket data is, at least, non-0.
-					// We could do some fancy randomness test here, but, ehh, whatever.
-					// This checks for the issue where you can calculate the path length given the
-					// onion data as all the path entries that the originator sent will be here
-					// as-is (and were originally 0s).
-					// Of course reverse path calculation is still pretty easy given naive routing
-					// algorithms, but this fixes the most-obvious case.
-					let mut next_bytes = [0; 32];
-					chacha_stream.read_exact(&mut next_bytes).unwrap();
-					assert_ne!(next_bytes[..], [0; 32][..]);
-					chacha_stream.read_exact(&mut next_bytes).unwrap();
-					assert_ne!(next_bytes[..], [0; 32][..]);
-				}
-
 				// OUR PAYMENT!
 				// final_expiry_too_soon
 				if (msg.cltv_expiry as u64) < self.latest_block_height.load(Ordering::Acquire) as u64 + (CLTV_CLAIM_BUFFER + LATENCY_GRACE_PERIOD_BLOCKS) as u64 {
@@ -2356,7 +2380,7 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 		//encrypted with the same key. It's not immediately obvious how to usefully exploit that,
 		//but we should prevent it anyway.
 
-		let (mut pending_forward_info, mut channel_state_lock) = self.decode_update_add_htlc_onion(msg);
+		let (mut pending_forward_info, mut channel_state_lock) = self.decode_update_add_htlc_onion_mesh(msg, &their_node_id);
 		let channel_state = &mut *channel_state_lock;
 
 		match channel_state.by_id.entry(msg.channel_id) {

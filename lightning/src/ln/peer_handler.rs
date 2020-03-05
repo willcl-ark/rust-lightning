@@ -884,6 +884,7 @@ impl<Descriptor: SocketDescriptor, CM: Deref> PeerManager<Descriptor, CM> where 
 						}
 					}
 				}
+				println!("MESH: Got event inside peer_handler!");
 				match event {
 					MessageSendEvent::SendAcceptChannel { ref node_id, ref msg } => {
 						log_trace!(self, "Handling SendAcceptChannel event in peer_handler for node {} for channel {}",
