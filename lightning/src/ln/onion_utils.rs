@@ -159,7 +159,7 @@ pub(super) fn build_onion_payloads(path: &Vec<RouteHop>, total_msat: u64, paymen
 
 /// Length of the onion data packet. Before TLV-based onions this was 20 65-byte hops, though now
 /// the hops can be of variable length.
-pub(crate) const ONION_DATA_LEN: usize = 20*65;
+pub(crate) const ONION_DATA_LEN: usize = 65;
 
 #[inline]
 fn shift_arr_right(arr: &mut [u8; ONION_DATA_LEN], amt: usize) {
@@ -193,6 +193,12 @@ pub(super) fn construct_onion_packet(payloads: Vec<msgs::OnionHopData>, onion_ke
 	chacha.process(&[0; ONION_DATA_LEN], &mut packet_data);
 
 	construct_onion_packet_with_init_noise(payloads, onion_keys, packet_data, associated_data)
+}
+
+pub(super) fn construct_mesh_onion_packet(hop_data: [u8; 65]) -> msgs::OnionPacket {
+	msgs::OnionPacket {
+		hop_data,
+	}
 }
 
 #[cfg(test)]
@@ -256,10 +262,10 @@ fn construct_onion_packet_with_init_noise<HD: Writeable>(mut payloads: Vec<HD>, 
 	}
 
 	msgs::OnionPacket {
-		version: 0,
-		public_key: Ok(onion_keys.first().unwrap().ephemeral_pubkey),
+		// version: 0,
+		// public_key: Ok(onion_keys.first().unwrap().ephemeral_pubkey),
 		hop_data: packet_data,
-		hmac: hmac_res,
+		// hmac: hmac_res,
 	}
 }
 

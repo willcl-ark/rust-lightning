@@ -706,13 +706,13 @@ pub(crate) use self::fuzzy_internal_msgs::*;
 
 #[derive(Clone)]
 pub(crate) struct OnionPacket {
-	pub(crate) version: u8,
+	// pub(crate) version: u8,
 	/// In order to ensure we always return an error on Onion decode in compliance with BOLT 4, we
 	/// have to deserialize OnionPackets contained in UpdateAddHTLCs even if the ephemeral public
 	/// key (here) is bogus, so we hold a Result instead of a PublicKey as we'd like.
-	pub(crate) public_key: Result<PublicKey, secp256k1::Error>,
-	pub(crate) hop_data: [u8; 20*65],
-	pub(crate) hmac: [u8; 32],
+	// pub(crate) public_key: Result<PublicKey, secp256k1::Error>,
+	pub(crate) hop_data: [u8; 65],
+	// pub(crate) hmac: [u8; 32],
 }
 
 impl PartialEq for OnionPacket {
@@ -720,9 +720,10 @@ impl PartialEq for OnionPacket {
 		for (i, j) in self.hop_data.iter().zip(other.hop_data.iter()) {
 			if i != j { return false; }
 		}
-		self.version == other.version &&
-			self.public_key == other.public_key &&
-			self.hmac == other.hmac
+		true
+		// self.version == other.version &&
+		// self.public_key == other.public_key &&
+		// self.hmac == other.hmac
 	}
 }
 
@@ -991,14 +992,15 @@ impl_writeable_len_match!(OnionErrorPacket, {
 
 impl Writeable for OnionPacket {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), ::std::io::Error> {
-		w.size_hint(1 + 33 + 20*65 + 32);
-		self.version.write(w)?;
-		match self.public_key {
-			Ok(pubkey) => pubkey.write(w)?,
-			Err(_) => [0u8;33].write(w)?,
-		}
+		// w.size_hint(1 + 33 + 65 + 32);
+		w.size_hint(65);
+		// self.version.write(w)?;
+		// match self.public_key {
+		// 	Ok(pubkey) => pubkey.write(w)?,
+		// 	Err(_) => [0u8;33].write(w)?,
+		// }
 		w.write_all(&self.hop_data)?;
-		self.hmac.write(w)?;
+		// self.hmac.write(w)?;
 		Ok(())
 	}
 }
@@ -1006,14 +1008,14 @@ impl Writeable for OnionPacket {
 impl Readable for OnionPacket {
 	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
 		Ok(OnionPacket {
-			version: Readable::read(r)?,
-			public_key: {
-				let mut buf = [0u8;33];
-				r.read_exact(&mut buf)?;
-				PublicKey::from_slice(&buf)
-			},
+			// version: Readable::read(r)?,
+			// public_key: {
+			// 	let mut buf = [0u8;33];
+			// 	r.read_exact(&mut buf)?;
+			// 	PublicKey::from_slice(&buf)
+			// },
 			hop_data: Readable::read(r)?,
-			hmac: Readable::read(r)?,
+			// hmac: Readable::read(r)?,
 		})
 	}
 }
