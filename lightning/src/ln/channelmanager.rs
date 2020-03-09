@@ -907,7 +907,8 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 
 	fn decode_update_add_htlc_onion_mesh(&self, msg: &msgs::UpdateAddHTLC, their_pubkey: &PublicKey) -> (PendingHTLCStatus, MutexGuard<ChannelHolder<ChanSigner>>) {
 
-		// We need to convert from publicKey to point:
+		// print the htlc message
+		println!("mesh_debug: {:?}", msg);
 
 		// Create the DH shared secret
 		let shared_secret = {
