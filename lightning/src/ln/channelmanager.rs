@@ -14,11 +14,11 @@ use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::network::constants::Network;
 use bitcoin::util::hash::BitcoinHash;
 
-use bitcoin_hashes::{Hash, HashEngine};
-use bitcoin_hashes::hmac::{Hmac, HmacEngine};
+use bitcoin_hashes::{Hash};
+// use bitcoin_hashes::hmac::{Hmac, HmacEngine};
 use bitcoin_hashes::sha256::Hash as Sha256;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
-use bitcoin_hashes::cmp::fixed_time_eq;
+// use bitcoin_hashes::cmp::fixed_time_eq;
 
 use secp256k1::key::{SecretKey,PublicKey};
 use secp256k1::Secp256k1;
@@ -38,13 +38,13 @@ use chain::keysinterface::{ChannelKeys, KeysInterface, InMemoryChannelKeys};
 use util::config::UserConfig;
 use util::{byte_utils, events};
 use util::ser::{Readable, ReadableArgs, Writeable, Writer};
-use util::chacha20::{ChaCha20, ChaChaReader};
+// use util::chacha20::{ChaCha20, ChaChaReader};
 use util::logger::Logger;
 use util::errors::APIError;
 
 use std::{cmp, mem};
 use std::collections::{HashMap, hash_map, HashSet};
-use std::io::{Cursor, Read};
+// use std::io::{Read};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -414,7 +414,7 @@ pub(crate) const MAX_LOCAL_BREAKDOWN_TIMEOUT: u16 = 6 * 24 * 7;
 /// the HTLC via a full update_fail_htlc/commitment_signed dance before we hit the
 /// CLTV_CLAIM_BUFFER point (we static assert that it's at least 3 blocks more).
 const CLTV_EXPIRY_DELTA: u16 = 6 * 12; //TODO?
-pub(super) const CLTV_FAR_FAR_AWAY: u32 = 6 * 24 * 7; //TODO?
+// pub(super) const CLTV_FAR_FAR_AWAY: u32 = 6 * 24 * 7; //TODO?
 
 // Check that our CLTV_EXPIRY is at least CLTV_CLAIM_BUFFER + ANTI_REORG_DELAY + LATENCY_GRACE_PERIOD_BLOCKS,
 // ie that if the next-hop peer fails the HTLC within
@@ -917,16 +917,12 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 			arr
 		};
 
-		// Init the channel_state as none
-		let mut channel_state = None;
-
 		// Hopefully we use legacy onions so this can just be None?
 		let payment_data = None;
 
-		// Hard-code this as an onion to us (::Receive)
-		// Also hard-code amount and cltv expiry
-		let pending_forward_info =
-
+		let this_onion = &msg.onion_routing_packet;
+		let pending_forward_info = if this_onion.to == self.get_our_node_id() {
+			// If this HTLC is for us:
 			PendingHTLCStatus::Forward(PendingHTLCInfo {
 				type_data: PendingForwardReceiveHTLCInfo::Receive {
 					payment_data,
@@ -936,10 +932,36 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 				incoming_shared_secret: shared_secret,
 				amt_to_forward: msg.amount_msat - 1,
 				outgoing_cltv_value: msg.cltv_expiry - 6,
-			});
+			})
+		} else {
+			// If HTLC is not for us, then we forward.
+			// Try to find another channel to send down, that we didn't receive from.
+
+			fn get_possible_channels(all_channels: Vec<ChannelDetails>, recv_from_id: [u8; 32]) -> Vec<ChannelDetails> {
+				all_channels.into_iter()
+					// Filter by channels we have who's channel_id != channel_id msg received from
+					.filter(|s| s.channel_id != recv_from_id)
+					.collect()
+			}
+
+			// TODO: We need to handle the case where we didn't find any new channels here!!
+			let possible_channels = get_possible_channels(self.list_usable_channels(), msg.channel_id);
+			let next_chan_short_id = possible_channels[0].short_channel_id.unwrap();
+
+			PendingHTLCStatus::Forward(PendingHTLCInfo {
+				type_data: PendingForwardReceiveHTLCInfo::Forward {
+					onion_packet: msg.onion_routing_packet.clone(),
+					short_channel_id: next_chan_short_id,
+				},
+				payment_hash: msg.payment_hash.clone(),
+				incoming_shared_secret: shared_secret,
+				amt_to_forward: msg.amount_msat - 1,
+				outgoing_cltv_value: msg.cltv_expiry - 6,
+			})
+		};
 
 		// Lock the mutex on the channel state
-		channel_state = Some(self.channel_state.lock().unwrap());
+		let channel_state = Some(self.channel_state.lock().unwrap());
 
 		// Return the pending forward info and the mutex
 		(pending_forward_info, channel_state.unwrap())
@@ -1013,7 +1035,7 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 	/// must not contain multiple paths as otherwise the multipath data cannot be sent.
 	/// If a payment_secret *is* provided, we assume that the invoice had the basic_mpp feature bit
 	/// set (either as required or as available).
-	pub fn send_payment(&self, route: Route, payment_hash: PaymentHash, payment_secret: Option<&[u8; 32]>) -> Result<(), PaymentSendFailure> {
+	pub fn send_payment(&self, route: Route, payment_hash: PaymentHash, payment_secret: Option<&[u8; 32]>, recv_pubkey: PublicKey) -> Result<(), PaymentSendFailure> {
 		if route.paths.len() < 1 {
 			return Err(PaymentSendFailure::ParameterError(APIError::RouteError{err: "There must be at least one path to send over"}));
 		}
@@ -1048,19 +1070,10 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 			}
 
 			log_trace!(self, "Attempting to send payment for path with next hop {}", path.first().unwrap().short_channel_id);
-			let (session_priv, prng_seed) = self.keys_manager.get_onion_rand();
+			let (session_priv, _prng_seed) = self.keys_manager.get_onion_rand();
 
-			// let onion_keys = check_res_push!(onion_utils::construct_onion_keys(&self.secp_ctx, &path, &session_priv)
-			// 	.map_err(|_| APIError::RouteError{err: "Pubkey along hop was maliciously selected"}));
-			let (onion_payloads, htlc_msat, htlc_cltv) = check_res_push!(onion_utils::build_onion_payloads(&path, total_value, payment_secret, cur_height));
-			// if onion_utils::route_size_insane(&onion_payloads) {
-			// 	check_res_push!(Err(APIError::RouteError{err: "Route size too large considering onion data"}));
-			// }
-			// let onion_packet = onion_utils::construct_onion_packet(onion_payloads, onion_keys, prng_seed, &payment_hash);
-
-			// Use an array of 65 0's for testing
-			let mut _test_hop_data = [0; 65];
-			let onion_packet = onion_utils::construct_mesh_onion_packet(_test_hop_data);
+			let (_onion_payloads, htlc_msat, htlc_cltv) = check_res_push!(onion_utils::build_onion_payloads(&path, total_value, payment_secret, cur_height));
+			let onion_packet = onion_utils::construct_mesh_onion_packet(self.get_our_node_id(), recv_pubkey);
 
 			let _ = self.total_consistency_lock.read().unwrap();
 
@@ -2143,6 +2156,8 @@ impl<ChanSigner: ChannelKeys, M: Deref> ChannelManager<ChanSigner, M> where M::T
 		//encrypted with the same key. It's not immediately obvious how to usefully exploit that,
 		//but we should prevent it anyway.
 
+		// TODO: the decode function is where we used to handle whether it was a payment for us, or
+		// 	for someone else. We need to add that back in...
 		let (mut pending_forward_info, mut channel_state_lock) = self.decode_update_add_htlc_onion_mesh(msg, &their_node_id);
 		let channel_state = &mut *channel_state_lock;
 

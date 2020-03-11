@@ -854,7 +854,7 @@ impl Router {
 	/// The fees on channels from us to next-hops are ignored (as they are assumed to all be
 	/// equal), however the enabled/disabled bit on such channels as well as the htlc_minimum_msat
 	/// *is* checked as they may change based on the receiving node.
-	pub fn get_route(&self, target: &PublicKey, first_hops: Option<&[channelmanager::ChannelDetails]>, last_hops: &[RouteHint], final_value_msat: u64, final_cltv: u32) -> Result<Route, LightningError> {
+	pub fn get_route(&self, target: &PublicKey, first_hops: Option<&[channelmanager::ChannelDetails]>, final_value_msat: u64, final_cltv: u32) -> Result<Route, LightningError> {
 		// TODO: Obviously *only* using total fee cost sucks. We should consider weighting by
 		// uptime/success in using a node in the past.
 		let network = self.network_map.read().unwrap();
@@ -1006,24 +1006,24 @@ impl Router {
 			},
 		}
 
-		for hop in last_hops.iter() {
-			if first_hops.is_none() || hop.src_node_id != network.our_node_id { // first_hop overrules last_hops
-				if network.nodes.get(&hop.src_node_id).is_some() {
-					if first_hops.is_some() {
-						if let Some(&(ref first_hop, ref features)) = first_hop_targets.get(&hop.src_node_id) {
-							// Currently there are no channel-context features defined, so we are a
-							// bit lazy here. In the future, we should pull them out via our
-							// ChannelManager, but there's no reason to waste the space until we
-							// need them.
-							add_entry!(first_hop, hop.src_node_id, dummy_directional_info, ChannelFeatures::with_known_relevant_init_flags(&features), 0);
-						}
-					}
-					// BOLT 11 doesn't allow inclusion of features for the last hop hints, which
-					// really sucks, cause we're gonna need that eventually.
-					add_entry!(hop.short_channel_id, target, hop, ChannelFeatures::empty(), 0);
-				}
-			}
-		}
+		// for hop in last_hops.iter() {
+		// 	if first_hops.is_none() || hop.src_node_id != network.our_node_id { // first_hop overrules last_hops
+		// 		if network.nodes.get(&hop.src_node_id).is_some() {
+		// 			if first_hops.is_some() {
+		// 				if let Some(&(ref first_hop, ref features)) = first_hop_targets.get(&hop.src_node_id) {
+		// 					// Currently there are no channel-context features defined, so we are a
+		// 					// bit lazy here. In the future, we should pull them out via our
+		// 					// ChannelManager, but there's no reason to waste the space until we
+		// 					// need them.
+		// 					add_entry!(first_hop, hop.src_node_id, dummy_directional_info, ChannelFeatures::with_known_relevant_init_flags(&features), 0);
+		// 				}
+		// 			}
+		// 			// BOLT 11 doesn't allow inclusion of features for the last hop hints, which
+		// 			// really sucks, cause we're gonna need that eventually.
+		// 			add_entry!(hop.short_channel_id, target, hop, ChannelFeatures::empty(), 0);
+		// 		}
+		// 	}
+		// }
 
 		while let Some(RouteGraphNode { pubkey, lowest_fee_to_node, .. }) = targets.pop() {
 			if pubkey == network.our_node_id {

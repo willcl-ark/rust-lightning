@@ -27,6 +27,7 @@ mutation_testing = ["mutagen"]
 [dependencies]
 bitcoin = "0.21"
 bitcoin_hashes = "0.7"
+hex = "0.3"
 secp256k1 = "0.15"
 mutagen = { git = "https://github.com/TheBlueMatt/mutagen", optional = true }
 
@@ -35,5 +36,4 @@ version = "0.21"
 features = ["bitcoinconsensus"]
 
 [dev-dependencies]
-hex = "0.3"
 rand = "0.4"

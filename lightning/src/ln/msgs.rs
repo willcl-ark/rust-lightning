@@ -17,7 +17,7 @@
 
 use secp256k1::key::PublicKey;
 use secp256k1::Signature;
-use secp256k1;
+// use secp256k1;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use bitcoin::blockdata::script::Script;
 
@@ -706,30 +706,24 @@ pub(crate) use self::fuzzy_internal_msgs::*;
 
 #[derive(Clone)]
 pub(crate) struct OnionPacket {
-	// pub(crate) version: u8,
-	/// In order to ensure we always return an error on Onion decode in compliance with BOLT 4, we
-	/// have to deserialize OnionPackets contained in UpdateAddHTLCs even if the ephemeral public
-	/// key (here) is bogus, so we hold a Result instead of a PublicKey as we'd like.
-	// pub(crate) public_key: Result<PublicKey, secp256k1::Error>,
-	pub(crate) hop_data: [u8; 65],
-	// pub(crate) hmac: [u8; 32],
+	pub from: PublicKey,
+	pub to: PublicKey,
 }
 
 impl std::fmt::Debug for OnionPacket {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{:?}", &self.hop_data[..])
+		write!(f, "from: {:?}, to: {:?}", self.from, self.to)
 	}
 }
 
 impl PartialEq for OnionPacket {
 	fn eq(&self, other: &OnionPacket) -> bool {
-		for (i, j) in self.hop_data.iter().zip(other.hop_data.iter()) {
-			if i != j { return false; }
+		if self.from == other.from &&
+			self.to == other.to {
+			true
+		} else {
+			false
 		}
-		true
-		// self.version == other.version &&
-		// self.public_key == other.public_key &&
-		// self.hmac == other.hmac
 	}
 }
 
@@ -998,15 +992,9 @@ impl_writeable_len_match!(OnionErrorPacket, {
 
 impl Writeable for OnionPacket {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), ::std::io::Error> {
-		// w.size_hint(1 + 33 + 65 + 32);
-		w.size_hint(65);
-		// self.version.write(w)?;
-		// match self.public_key {
-		// 	Ok(pubkey) => pubkey.write(w)?,
-		// 	Err(_) => [0u8;33].write(w)?,
-		// }
-		w.write_all(&self.hop_data)?;
-		// self.hmac.write(w)?;
+		w.size_hint(33 + 33);
+		self.from.write(w)?;
+		self.to.write(w)?;
 		Ok(())
 	}
 }
@@ -1014,19 +1002,13 @@ impl Writeable for OnionPacket {
 impl Readable for OnionPacket {
 	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
 		Ok(OnionPacket {
-			// version: Readable::read(r)?,
-			// public_key: {
-			// 	let mut buf = [0u8;33];
-			// 	r.read_exact(&mut buf)?;
-			// 	PublicKey::from_slice(&buf)
-			// },
-			hop_data: Readable::read(r)?,
-			// hmac: Readable::read(r)?,
+			from: Readable::read(r)?,
+			to: Readable::read(r)?,
 		})
 	}
 }
 
-impl_writeable!(UpdateAddHTLC, 32+8+8+32+4+1366, {
+impl_writeable!(UpdateAddHTLC, 32+8+8+32+4+66, {
 	channel_id,
 	htlc_id,
 	amount_msat,
@@ -1915,10 +1897,8 @@ mod tests {
 		let secp_ctx = Secp256k1::new();
 		let (_, pubkey_1) = get_keys_from!("0101010101010101010101010101010101010101010101010101010101010101", secp_ctx);
 		let onion_routing_packet = msgs::OnionPacket {
-			version: 255,
-			public_key: Ok(pubkey_1),
-			hop_data: [1; 20*65],
-			hmac: [2; 32]
+			from: pubkey_1,
+			to: pubkey_1,
 		};
 		let update_add_htlc = msgs::UpdateAddHTLC {
 			channel_id: [2; 32],

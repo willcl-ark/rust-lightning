@@ -403,9 +403,9 @@ impl_array!(4); // for IPv4
 impl_array!(10); // for OnionV2
 impl_array!(16); // for IPv6
 impl_array!(32); // for channel id & hmac
-impl_array!(33); // for PublicKey
+impl_array!(33); // for PublicKey & OnionPacket
 impl_array!(64); // for Signature
-impl_array!(65); // for OnionPacket.hop_data
+// impl_array!(1300); // for OnionPacket
 
 // HashMap
 impl<K, V> Writeable for HashMap<K, V>

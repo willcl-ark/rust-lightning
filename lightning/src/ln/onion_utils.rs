@@ -4,7 +4,7 @@ use ln::router::RouteHop;
 use util::byte_utils;
 use util::chacha20::ChaCha20;
 use util::errors::{self, APIError};
-use util::ser::{Readable, Writeable, LengthCalculatingWriter};
+use util::ser::{Readable, Writeable}; //, LengthCalculatingWriter};
 use util::logger::{Logger, LogHolder};
 
 use bitcoin_hashes::{Hash, HashEngine};
@@ -20,30 +20,30 @@ use secp256k1;
 use std::io::Cursor;
 use std::sync::Arc;
 
-pub(super) struct OnionKeys {
-	#[cfg(test)]
-	pub(super) shared_secret: SharedSecret,
-	#[cfg(test)]
-	pub(super) blinding_factor: [u8; 32],
-	pub(super) ephemeral_pubkey: PublicKey,
-	pub(super) rho: [u8; 32],
-	pub(super) mu: [u8; 32],
-}
+// pub(super) struct OnionKeys {
+// 	#[cfg(test)]
+// 	pub(super) shared_secret: SharedSecret,
+// 	#[cfg(test)]
+// 	pub(super) blinding_factor: [u8; 32],
+// 	pub(super) ephemeral_pubkey: PublicKey,
+// 	pub(super) rho: [u8; 32],
+// 	pub(super) mu: [u8; 32],
+// }
 
-#[inline]
-pub(super) fn gen_rho_mu_from_shared_secret(shared_secret: &[u8]) -> ([u8; 32], [u8; 32]) {
-	assert_eq!(shared_secret.len(), 32);
-	({
-		let mut hmac = HmacEngine::<Sha256>::new(&[0x72, 0x68, 0x6f]); // rho
-		hmac.input(&shared_secret[..]);
-		Hmac::from_engine(hmac).into_inner()
-	},
-	{
-		let mut hmac = HmacEngine::<Sha256>::new(&[0x6d, 0x75]); // mu
-		hmac.input(&shared_secret[..]);
-		Hmac::from_engine(hmac).into_inner()
-	})
-}
+// #[inline]
+// pub(super) fn gen_rho_mu_from_shared_secret(shared_secret: &[u8]) -> ([u8; 32], [u8; 32]) {
+// 	assert_eq!(shared_secret.len(), 32);
+// 	({
+// 		let mut hmac = HmacEngine::<Sha256>::new(&[0x72, 0x68, 0x6f]); // rho
+// 		hmac.input(&shared_secret[..]);
+// 		Hmac::from_engine(hmac).into_inner()
+// 	},
+// 	{
+// 		let mut hmac = HmacEngine::<Sha256>::new(&[0x6d, 0x75]); // mu
+// 		hmac.input(&shared_secret[..]);
+// 		Hmac::from_engine(hmac).into_inner()
+// 	})
+// }
 
 #[inline]
 pub(super) fn gen_um_from_shared_secret(shared_secret: &[u8]) -> [u8; 32] {
@@ -86,26 +86,26 @@ pub(super) fn construct_onion_keys_callback<T: secp256k1::Signing, FType: FnMut(
 	Ok(())
 }
 
-// can only fail if an intermediary hop has an invalid public key or session_priv is invalid
-pub(super) fn construct_onion_keys<T: secp256k1::Signing>(secp_ctx: &Secp256k1<T>, path: &Vec<RouteHop>, session_priv: &SecretKey) -> Result<Vec<OnionKeys>, secp256k1::Error> {
-	let mut res = Vec::with_capacity(path.len());
-
-	construct_onion_keys_callback(secp_ctx, path, session_priv, |shared_secret, _blinding_factor, ephemeral_pubkey, _| {
-		let (rho, mu) = gen_rho_mu_from_shared_secret(&shared_secret[..]);
-
-		res.push(OnionKeys {
-			#[cfg(test)]
-			shared_secret,
-			#[cfg(test)]
-			blinding_factor: _blinding_factor,
-			ephemeral_pubkey,
-			rho,
-			mu,
-		});
-	})?;
-
-	Ok(res)
-}
+// // can only fail if an intermediary hop has an invalid public key or session_priv is invalid
+// pub(super) fn construct_onion_keys<T: secp256k1::Signing>(secp_ctx: &Secp256k1<T>, path: &Vec<RouteHop>, session_priv: &SecretKey) -> Result<Vec<OnionKeys>, secp256k1::Error> {
+// 	let mut res = Vec::with_capacity(path.len());
+//
+// 	construct_onion_keys_callback(secp_ctx, path, session_priv, |shared_secret, _blinding_factor, ephemeral_pubkey, _| {
+// 		let (rho, mu) = gen_rho_mu_from_shared_secret(&shared_secret[..]);
+//
+// 		res.push(OnionKeys {
+// 			#[cfg(test)]
+// 			shared_secret,
+// 			#[cfg(test)]
+// 			blinding_factor: _blinding_factor,
+// 			ephemeral_pubkey,
+// 			rho,
+// 			mu,
+// 		});
+// 	})?;
+//
+// 	Ok(res)
+// }
 
 /// returns the hop data, as well as the first-hop value_msat and CLTV value we should send.
 pub(super) fn build_onion_payloads(path: &Vec<RouteHop>, total_msat: u64, payment_secret_option: Option<&[u8; 32]>, starting_htlc_offset: u32) -> Result<(Vec<msgs::OnionHopData>, u64, u32), APIError> {
@@ -157,117 +157,118 @@ pub(super) fn build_onion_payloads(path: &Vec<RouteHop>, total_msat: u64, paymen
 	Ok((res, cur_value_msat, cur_cltv))
 }
 
-/// Length of the onion data packet. Before TLV-based onions this was 20 65-byte hops, though now
-/// the hops can be of variable length.
-pub(crate) const ONION_DATA_LEN: usize = 65;
+// /// Length of the onion data packet. Before TLV-based onions this was 20 65-byte hops, though now
+// /// the hops can be of variable length.
+// pub(crate) const ONION_DATA_LEN: usize = 65;
 
-#[inline]
-fn shift_arr_right(arr: &mut [u8; ONION_DATA_LEN], amt: usize) {
-	for i in (amt..ONION_DATA_LEN).rev() {
-		arr[i] = arr[i-amt];
-	}
-	for i in 0..amt {
-		arr[i] = 0;
-	}
-}
+// #[inline]
+// fn shift_arr_right(arr: &mut [u8; ONION_DATA_LEN], amt: usize) {
+// 	for i in (amt..ONION_DATA_LEN).rev() {
+// 		arr[i] = arr[i-amt];
+// 	}
+// 	for i in 0..amt {
+// 		arr[i] = 0;
+// 	}
+// }
 
-pub(super) fn route_size_insane(payloads: &Vec<msgs::OnionHopData>) -> bool {
-	let mut len = 0;
-	for payload in payloads.iter() {
-		let mut payload_len = LengthCalculatingWriter(0);
-		payload.write(&mut payload_len).expect("Failed to calculate length");
-		assert!(payload_len.0 + 32 < ONION_DATA_LEN);
-		len += payload_len.0 + 32;
-		if len > ONION_DATA_LEN {
-			return true;
-		}
-	}
-	false
-}
+// pub(super) fn route_size_insane(payloads: &Vec<msgs::OnionHopData>) -> bool {
+// 	let mut len = 0;
+// 	for payload in payloads.iter() {
+// 		let mut payload_len = LengthCalculatingWriter(0);
+// 		payload.write(&mut payload_len).expect("Failed to calculate length");
+// 		assert!(payload_len.0 + 32 < ONION_DATA_LEN);
+// 		len += payload_len.0 + 32;
+// 		if len > ONION_DATA_LEN {
+// 			return true;
+// 		}
+// 	}
+// 	false
+// }
 
-/// panics if route_size_insane(paylods)
-pub(super) fn construct_onion_packet(payloads: Vec<msgs::OnionHopData>, onion_keys: Vec<OnionKeys>, prng_seed: [u8; 32], associated_data: &PaymentHash) -> msgs::OnionPacket {
-	let mut packet_data = [0; ONION_DATA_LEN];
+// /// panics if route_size_insane(paylods)
+// pub(super) fn construct_onion_packet(payloads: Vec<msgs::OnionHopData>, onion_keys: Vec<OnionKeys>, prng_seed: [u8; 32], associated_data: &PaymentHash) -> msgs::OnionPacket {
+// 	let mut packet_data = [0; ONION_DATA_LEN];
+//
+// 	let mut chacha = ChaCha20::new(&prng_seed, &[0; 8]);
+// 	chacha.process(&[0; ONION_DATA_LEN], &mut packet_data);
+//
+// 	construct_onion_packet_with_init_noise(payloads, onion_keys, packet_data, associated_data)
+// }
 
-	let mut chacha = ChaCha20::new(&prng_seed, &[0; 8]);
-	chacha.process(&[0; ONION_DATA_LEN], &mut packet_data);
-
-	construct_onion_packet_with_init_noise(payloads, onion_keys, packet_data, associated_data)
-}
-
-pub(super) fn construct_mesh_onion_packet(hop_data: [u8; 65]) -> msgs::OnionPacket {
+pub(super) fn construct_mesh_onion_packet(from: PublicKey, to: PublicKey) -> msgs::OnionPacket {
 	msgs::OnionPacket {
-		hop_data,
+		from,
+		to,
 	}
 }
 
-#[cfg(test)]
-// Used in testing to write bogus OnionHopDatas, which is otherwise not representable in
-// msgs::OnionHopData.
-pub(super) fn construct_onion_packet_bogus_hopdata<HD: Writeable>(payloads: Vec<HD>, onion_keys: Vec<OnionKeys>, prng_seed: [u8; 32], associated_data: &PaymentHash) -> msgs::OnionPacket {
-	let mut packet_data = [0; ONION_DATA_LEN];
+// #[cfg(test)]
+// // Used in testing to write bogus OnionHopDatas, which is otherwise not representable in
+// // msgs::OnionHopData.
+// pub(super) fn construct_onion_packet_bogus_hopdata<HD: Writeable>(payloads: Vec<HD>, onion_keys: Vec<OnionKeys>, prng_seed: [u8; 32], associated_data: &PaymentHash) -> msgs::OnionPacket {
+// 	let mut packet_data = [0; ONION_DATA_LEN];
+//
+// 	let mut chacha = ChaCha20::new(&prng_seed, &[0; 8]);
+// 	chacha.process(&[0; ONION_DATA_LEN], &mut packet_data);
+//
+// 	construct_onion_packet_with_init_noise(payloads, onion_keys, packet_data, associated_data)
+// }
 
-	let mut chacha = ChaCha20::new(&prng_seed, &[0; 8]);
-	chacha.process(&[0; ONION_DATA_LEN], &mut packet_data);
-
-	construct_onion_packet_with_init_noise(payloads, onion_keys, packet_data, associated_data)
-}
-
-/// panics if route_size_insane(paylods)
-fn construct_onion_packet_with_init_noise<HD: Writeable>(mut payloads: Vec<HD>, onion_keys: Vec<OnionKeys>, mut packet_data: [u8; ONION_DATA_LEN], associated_data: &PaymentHash) -> msgs::OnionPacket {
-	let filler = {
-		const ONION_HOP_DATA_LEN: usize = 65; // We may decrease this eventually after TLV is common
-		let mut res = Vec::with_capacity(ONION_HOP_DATA_LEN * (payloads.len() - 1));
-
-		let mut pos = 0;
-		for (i, (payload, keys)) in payloads.iter().zip(onion_keys.iter()).enumerate() {
-			if i == payloads.len() - 1 { break; }
-
-			let mut chacha = ChaCha20::new(&keys.rho, &[0u8; 8]);
-			for _ in 0..(ONION_DATA_LEN - pos) { // TODO: Batch this.
-				let mut dummy = [0; 1];
-				chacha.process_in_place(&mut dummy); // We don't have a seek function :(
-			}
-
-			let mut payload_len = LengthCalculatingWriter(0);
-			payload.write(&mut payload_len).expect("Failed to calculate length");
-			pos += payload_len.0 + 32;
-			assert!(pos <= ONION_DATA_LEN);
-
-			res.resize(pos, 0u8);
-			chacha.process_in_place(&mut res);
-		}
-		res
-	};
-
-	let mut hmac_res = [0; 32];
-	for (i, (payload, keys)) in payloads.iter_mut().zip(onion_keys.iter()).rev().enumerate() {
-		let mut payload_len = LengthCalculatingWriter(0);
-		payload.write(&mut payload_len).expect("Failed to calculate length");
-		shift_arr_right(&mut packet_data, payload_len.0 + 32);
-		packet_data[0..payload_len.0].copy_from_slice(&payload.encode()[..]);
-		packet_data[payload_len.0..(payload_len.0 + 32)].copy_from_slice(&hmac_res);
-
-		let mut chacha = ChaCha20::new(&keys.rho, &[0u8; 8]);
-		chacha.process_in_place(&mut packet_data);
-
-		if i == 0 {
-			packet_data[ONION_DATA_LEN - filler.len()..ONION_DATA_LEN].copy_from_slice(&filler[..]);
-		}
-
-		let mut hmac = HmacEngine::<Sha256>::new(&keys.mu);
-		hmac.input(&packet_data);
-		hmac.input(&associated_data.0[..]);
-		hmac_res = Hmac::from_engine(hmac).into_inner();
-	}
-
-	msgs::OnionPacket {
-		// version: 0,
-		// public_key: Ok(onion_keys.first().unwrap().ephemeral_pubkey),
-		hop_data: packet_data,
-		// hmac: hmac_res,
-	}
-}
+// /// panics if route_size_insane(paylods)
+// fn construct_onion_packet_with_init_noise<HD: Writeable>(mut payloads: Vec<HD>, onion_keys: Vec<OnionKeys>, mut packet_data: [u8; ONION_DATA_LEN], associated_data: &PaymentHash) -> msgs::OnionPacket {
+// 	let filler = {
+// 		const ONION_HOP_DATA_LEN: usize = 65; // We may decrease this eventually after TLV is common
+// 		let mut res = Vec::with_capacity(ONION_HOP_DATA_LEN * (payloads.len() - 1));
+//
+// 		let mut pos = 0;
+// 		for (i, (payload, keys)) in payloads.iter().zip(onion_keys.iter()).enumerate() {
+// 			if i == payloads.len() - 1 { break; }
+//
+// 			let mut chacha = ChaCha20::new(&keys.rho, &[0u8; 8]);
+// 			for _ in 0..(ONION_DATA_LEN - pos) { // TODO: Batch this.
+// 				let mut dummy = [0; 1];
+// 				chacha.process_in_place(&mut dummy); // We don't have a seek function :(
+// 			}
+//
+// 			let mut payload_len = LengthCalculatingWriter(0);
+// 			payload.write(&mut payload_len).expect("Failed to calculate length");
+// 			pos += payload_len.0 + 32;
+// 			assert!(pos <= ONION_DATA_LEN);
+//
+// 			res.resize(pos, 0u8);
+// 			chacha.process_in_place(&mut res);
+// 		}
+// 		res
+// 	};
+//
+// 	let mut hmac_res = [0; 32];
+// 	for (i, (payload, keys)) in payloads.iter_mut().zip(onion_keys.iter()).rev().enumerate() {
+// 		let mut payload_len = LengthCalculatingWriter(0);
+// 		payload.write(&mut payload_len).expect("Failed to calculate length");
+// 		shift_arr_right(&mut packet_data, payload_len.0 + 32);
+// 		packet_data[0..payload_len.0].copy_from_slice(&payload.encode()[..]);
+// 		packet_data[payload_len.0..(payload_len.0 + 32)].copy_from_slice(&hmac_res);
+//
+// 		let mut chacha = ChaCha20::new(&keys.rho, &[0u8; 8]);
+// 		chacha.process_in_place(&mut packet_data);
+//
+// 		if i == 0 {
+// 			packet_data[ONION_DATA_LEN - filler.len()..ONION_DATA_LEN].copy_from_slice(&filler[..]);
+// 		}
+//
+// 		let mut hmac = HmacEngine::<Sha256>::new(&keys.mu);
+// 		hmac.input(&packet_data);
+// 		hmac.input(&associated_data.0[..]);
+// 		hmac_res = Hmac::from_engine(hmac).into_inner();
+// 	}
+// 	let send_pubkey = PublicKey::from_slice(&hex::decode("0345debb5ea6f06129a70b53bda103651bdb394efa7b069bb18f74a4cb3402f83a").unwrap()).unwrap();
+// 	let recv_pubkey = PublicKey::from_slice(&hex::decode("02fcb6ba05cb9c0fceef37b90880fa880e47ba5afe6ecd2584a8bd12bdb7345836").unwrap()).unwrap();
+//
+// 	msgs::OnionPacket {
+// 		from: send_pubkey,
+// 		to: recv_pubkey,
+// 	}
+// }
 
 /// Encrypts a failure packet. raw_packet can either be a
 /// msgs::DecodedOnionErrorPacket.encode() result or a msgs::OnionErrorPacket.data element.
